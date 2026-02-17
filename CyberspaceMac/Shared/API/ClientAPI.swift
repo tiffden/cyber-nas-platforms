@@ -17,4 +17,9 @@ protocol ClientAPI {
     func auditQuery(_ request: AuditQueryRequest) async throws -> AuditQueryResponse
     func realmStatus() async throws -> RealmStatus
     func realmJoin(_ request: RealmJoinRequest) async throws -> RealmJoinResponse
+    func createRealmTestEnvironment(nodeCount: Int) async throws -> RealmHarnessInitResponse
+    func launchRealmHarnessUIs(nodeCount: Int) async throws -> RealmHarnessLaunchResponse
+    func stopRealmHarnessUIs(nodeCount: Int) async throws -> RealmHarnessLaunchResponse
+    func realmHarnessNodes(nodeCount: Int) async throws -> [RealmHarnessNodeMetadata]
+    func realmHarnessCurrentLog(nodeID: Int, maxLines: Int) async throws -> String
 }

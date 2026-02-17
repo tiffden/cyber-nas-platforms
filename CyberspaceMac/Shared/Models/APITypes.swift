@@ -139,3 +139,24 @@ struct RealmJoinResponse: Equatable {
     let joined: Bool
     let message: String
 }
+
+struct RealmHarnessNodeMetadata: Identifiable, Equatable {
+    let id: Int
+    let envFile: String
+    let workdir: String
+    let keydir: String
+    let host: String
+    let port: Int
+    let status: String
+    let memberCount: Int
+}
+
+struct RealmHarnessInitResponse: Equatable {
+    let nodeCount: Int
+    let nodes: [RealmHarnessNodeMetadata]
+}
+
+struct RealmHarnessLaunchResponse: Equatable {
+    let nodeCount: Int
+    let output: String
+}

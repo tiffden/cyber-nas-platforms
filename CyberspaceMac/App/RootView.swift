@@ -1,4 +1,7 @@
 import SwiftUI
+#if canImport(AppKit)
+import AppKit
+#endif
 
 struct RootView: View {
     @EnvironmentObject private var appState: AppState
@@ -10,7 +13,7 @@ struct RootView: View {
                     NavigationLink(route.title, value: route)
                 }
             }
-            .navigationTitle("Cyberspace")
+            .navigationTitle(appState.uiWindowTitle)
         } detail: {
             switch appState.selectedRoute ?? .startHere {
             case .startHere:
@@ -38,5 +41,21 @@ struct RootView: View {
         .task {
             await appState.loadBootstrapDataIfNeeded()
         }
+        .onAppear {
+            applyWindowTitle()
+        }
+        .onChange(of: appState.uiWindowTitle) { _, _ in
+            applyWindowTitle()
+        }
+    }
+
+    private func applyWindowTitle() {
+        #if canImport(AppKit)
+        // Keep macOS title bar aligned with the dynamic sidebar title.
+        let title = appState.uiWindowTitle
+        if let window = NSApplication.shared.keyWindow ?? NSApplication.shared.windows.first {
+            window.title = title
+        }
+        #endif
     }
 }

@@ -18,8 +18,12 @@ if ! command -v dune >/dev/null 2>&1; then
   exit 1
 fi
 
-echo "Building SPKI tools..."
-(cd "$SPKI_ROOT" && dune build)
+if [[ "${SPKI_SKIP_BUILD:-0}" = "1" ]]; then
+  echo "Skipping build (SPKI_SKIP_BUILD=1)"
+else
+  echo "Building SPKI tools..."
+  (cd "$SPKI_ROOT" && dune build)
+fi
 
 if [[ -f "$ENV_FILE" ]]; then
   echo "Loading environment from $ENV_FILE"

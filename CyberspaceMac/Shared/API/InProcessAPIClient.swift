@@ -194,4 +194,60 @@ struct InProcessAPIClient: ClientAPI {
         }
         return RealmJoinResponse(joined: true, message: "joined \(request.name) via \(request.host):\(request.port)")
     }
+
+    func createRealmTestEnvironment(nodeCount: Int) async throws -> RealmHarnessInitResponse {
+        guard nodeCount > 0 else {
+            throw APIErrorPayload(code: "invalid_argument", message: "nodeCount must be > 0", details: nil)
+        }
+        let nodes = (1...nodeCount).map { id in
+            RealmHarnessNodeMetadata(
+                id: id,
+                envFile: "/tmp/mock/node\(id)/node.env",
+                workdir: "/tmp/mock/node\(id)/work",
+                keydir: "/tmp/mock/node\(id)/keys",
+                host: "127.0.0.1",
+                port: 7779 + id,
+                status: "standalone",
+                memberCount: 1
+            )
+        }
+        return RealmHarnessInitResponse(nodeCount: nodeCount, nodes: nodes)
+    }
+
+    func launchRealmHarnessUIs(nodeCount: Int) async throws -> RealmHarnessLaunchResponse {
+        guard nodeCount > 0 else {
+            throw APIErrorPayload(code: "invalid_argument", message: "nodeCount must be > 0", details: nil)
+        }
+        return RealmHarnessLaunchResponse(
+            nodeCount: nodeCount,
+            output: "Mock launch for \(nodeCount) nodes: no background processes started in in-process mode."
+        )
+    }
+
+    func stopRealmHarnessUIs(nodeCount: Int) async throws -> RealmHarnessLaunchResponse {
+        guard nodeCount > 0 else {
+            throw APIErrorPayload(code: "invalid_argument", message: "nodeCount must be > 0", details: nil)
+        }
+        return RealmHarnessLaunchResponse(
+            nodeCount: nodeCount,
+            output: "Mock stop for \(nodeCount) nodes: no background processes to stop in in-process mode."
+        )
+    }
+
+    func realmHarnessNodes(nodeCount: Int) async throws -> [RealmHarnessNodeMetadata] {
+        let response = try await createRealmTestEnvironment(nodeCount: nodeCount)
+        return response.nodes
+    }
+
+    func realmHarnessCurrentLog(nodeID: Int, maxLines: Int) async throws -> String {
+        guard nodeID > 0 else {
+            throw APIErrorPayload(code: "invalid_argument", message: "nodeID must be > 0", details: nil)
+        }
+        return """
+        [mock node \(nodeID)] Current Log
+        maxLines=\(maxLines)
+        - realm status queried
+        - no live harness process in in-process mode
+        """
+    }
 }

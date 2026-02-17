@@ -52,13 +52,39 @@ final class AppState: ObservableObject {
         memberCount: 0
     )
     @Published var realmJoinResult: RealmJoinResponse?
+    @Published var harnessNodeCount: Int = 3
+    @Published var harnessNodes: [RealmHarnessNodeMetadata] = []
+    @Published var selectedHarnessNodeID: Int = 1
+    @Published var harnessCurrentLog: String = ""
+    @Published var harnessLaunchOutput: String = ""
     @Published var hasLoadedBootstrapData = false
     @Published var lastErrorMessage: String?
 
     private let api: any ClientAPI
+    private let launchNodeID: Int
 
-    init(api: any ClientAPI = CLIBridgeAPIClient()) {
+    init(
+        api: any ClientAPI = CLIBridgeAPIClient(),
+        environment: [String: String] = ProcessInfo.processInfo.environment
+    ) {
         self.api = api
+        // `SPKI_NODE_ID` is set by harness scripts so each UI instance can identify itself in the window title.
+        self.launchNodeID = Int(environment["SPKI_NODE_ID"] ?? "") ?? 1
+    }
+
+    var uiInstanceLabel: String {
+        if launchNodeID <= 1 {
+            return "Main"
+        }
+        return "Test Client \(launchNodeID - 1)"
+    }
+
+    var uiKeyStatusLabel: String {
+        keys.isEmpty ? "no key" : "has key pair"
+    }
+
+    var uiWindowTitle: String {
+        "\(uiInstanceLabel) - status: \(uiKeyStatusLabel)"
     }
 
     func loadBootstrapDataIfNeeded() async {
@@ -201,6 +227,64 @@ final class AppState: ObservableObject {
             realmJoinResult = try await api.realmJoin(
                 RealmJoinRequest(name: name, host: host, port: port)
             )
+            lastErrorMessage = nil
+        } catch {
+            lastErrorMessage = (error as? APIErrorPayload)?.message ?? error.localizedDescription
+        }
+    }
+
+    func createRealmTestEnvironment(nodeCount: Int) async {
+        do {
+            let response = try await api.createRealmTestEnvironment(nodeCount: nodeCount)
+            harnessNodeCount = response.nodeCount
+            harnessNodes = response.nodes
+            // Default log view to a real node immediately after init so operators see live feedback.
+            if let first = response.nodes.first {
+                selectedHarnessNodeID = first.id
+            }
+            await refreshRealmHarnessLog(nodeID: selectedHarnessNodeID)
+            lastErrorMessage = nil
+        } catch {
+            lastErrorMessage = (error as? APIErrorPayload)?.message ?? error.localizedDescription
+        }
+    }
+
+    func refreshRealmHarnessNodes() async {
+        do {
+            harnessNodes = try await api.realmHarnessNodes(nodeCount: harnessNodeCount)
+            if harnessNodes.contains(where: { $0.id == selectedHarnessNodeID }) == false,
+               let first = harnessNodes.first {
+                selectedHarnessNodeID = first.id
+            }
+            lastErrorMessage = nil
+        } catch {
+            lastErrorMessage = (error as? APIErrorPayload)?.message ?? error.localizedDescription
+        }
+    }
+
+    func launchRealmHarnessUIs(nodeCount: Int) async {
+        do {
+            let response = try await api.launchRealmHarnessUIs(nodeCount: nodeCount)
+            harnessLaunchOutput = response.output
+            lastErrorMessage = nil
+        } catch {
+            lastErrorMessage = (error as? APIErrorPayload)?.message ?? error.localizedDescription
+        }
+    }
+
+    func stopRealmHarnessUIs(nodeCount: Int) async {
+        do {
+            let response = try await api.stopRealmHarnessUIs(nodeCount: nodeCount)
+            harnessLaunchOutput = response.output
+            lastErrorMessage = nil
+        } catch {
+            lastErrorMessage = (error as? APIErrorPayload)?.message ?? error.localizedDescription
+        }
+    }
+
+    func refreshRealmHarnessLog(nodeID: Int) async {
+        do {
+            harnessCurrentLog = try await api.realmHarnessCurrentLog(nodeID: nodeID, maxLines: 200)
             lastErrorMessage = nil
         } catch {
             lastErrorMessage = (error as? APIErrorPayload)?.message ?? error.localizedDescription
