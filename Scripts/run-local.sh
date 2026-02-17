@@ -29,22 +29,44 @@ if [[ -f "$ENV_FILE" ]]; then
   set +a
 fi
 
-for exe in spki_keygen.exe spki_status.exe spki_show.exe spki_realm.exe spki_audit.exe spki_vault.exe spki_certs.exe spki_authz.exe; do
-  if [[ ! -x "$SPKI_BIN_DIR/$exe" ]]; then
-    echo "Error: missing executable $SPKI_BIN_DIR/$exe"
-    echo "Try: cd $SPKI_ROOT && make build"
-    exit 1
-  fi
-done
+resolve_spki_bin() {
+  local base="$1"
+  local exe_path="$SPKI_BIN_DIR/$base.exe"
+  local plain_path="$SPKI_BIN_DIR/$base"
 
-export SPKI_STATUS_BIN="${SPKI_STATUS_BIN:-$SPKI_BIN_DIR/spki_status.exe}"
-export SPKI_SHOW_BIN="${SPKI_SHOW_BIN:-$SPKI_BIN_DIR/spki_show.exe}"
-export SPKI_KEYGEN_BIN="${SPKI_KEYGEN_BIN:-$SPKI_BIN_DIR/spki_keygen.exe}"
-export SPKI_REALM_BIN="${SPKI_REALM_BIN:-$SPKI_BIN_DIR/spki_realm.exe}"
-export SPKI_AUDIT_BIN="${SPKI_AUDIT_BIN:-$SPKI_BIN_DIR/spki_audit.exe}"
-export SPKI_VAULT_BIN="${SPKI_VAULT_BIN:-$SPKI_BIN_DIR/spki_vault.exe}"
-export SPKI_CERTS_BIN="${SPKI_CERTS_BIN:-$SPKI_BIN_DIR/spki_certs.exe}"
-export SPKI_AUTHZ_BIN="${SPKI_AUTHZ_BIN:-$SPKI_BIN_DIR/spki_authz.exe}"
+  if [[ -x "$exe_path" ]]; then
+    printf "%s" "$exe_path"
+    return 0
+  fi
+  if [[ -x "$plain_path" ]]; then
+    printf "%s" "$plain_path"
+    return 0
+  fi
+
+  echo "Error: missing executable for $base"
+  echo "Checked: $exe_path"
+  echo "Checked: $plain_path"
+  echo "Try: cd $SPKI_ROOT && make build"
+  exit 1
+}
+
+STATUS_BIN_DEFAULT="$(resolve_spki_bin spki_status)"
+SHOW_BIN_DEFAULT="$(resolve_spki_bin spki_show)"
+KEYGEN_BIN_DEFAULT="$(resolve_spki_bin spki_keygen)"
+REALM_BIN_DEFAULT="$(resolve_spki_bin spki_realm)"
+AUDIT_BIN_DEFAULT="$(resolve_spki_bin spki_audit)"
+VAULT_BIN_DEFAULT="$(resolve_spki_bin spki_vault)"
+CERTS_BIN_DEFAULT="$(resolve_spki_bin spki_certs)"
+AUTHZ_BIN_DEFAULT="$(resolve_spki_bin spki_authz)"
+
+export SPKI_STATUS_BIN="${SPKI_STATUS_BIN:-$STATUS_BIN_DEFAULT}"
+export SPKI_SHOW_BIN="${SPKI_SHOW_BIN:-$SHOW_BIN_DEFAULT}"
+export SPKI_KEYGEN_BIN="${SPKI_KEYGEN_BIN:-$KEYGEN_BIN_DEFAULT}"
+export SPKI_REALM_BIN="${SPKI_REALM_BIN:-$REALM_BIN_DEFAULT}"
+export SPKI_AUDIT_BIN="${SPKI_AUDIT_BIN:-$AUDIT_BIN_DEFAULT}"
+export SPKI_VAULT_BIN="${SPKI_VAULT_BIN:-$VAULT_BIN_DEFAULT}"
+export SPKI_CERTS_BIN="${SPKI_CERTS_BIN:-$CERTS_BIN_DEFAULT}"
+export SPKI_AUTHZ_BIN="${SPKI_AUTHZ_BIN:-$AUTHZ_BIN_DEFAULT}"
 export SPKI_KEY_DIR="${SPKI_KEY_DIR:-$HOME/.spki/keys}"
 export SPKI_CHEZ_SCRIPT="${SPKI_CHEZ_SCRIPT:-$SPKI_ROOT/scheme/chez/spki-realm.sps}"
 export SPKI_CHEZ_STATUS_SCRIPT="${SPKI_CHEZ_STATUS_SCRIPT:-$SPKI_ROOT/scheme/chez/spki-status.sps}"
