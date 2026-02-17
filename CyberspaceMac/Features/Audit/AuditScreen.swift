@@ -11,8 +11,26 @@ struct AuditScreen: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
-            Text("Audit")
+            Text("Step 7: Test Access")
                 .font(.title2.weight(.semibold))
+
+            GroupBox("Task Stub") {
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("Run representative actions for each node role and confirm expected allow/deny behavior.")
+                    Text("Use vault.put/get/commit as practical permission checks.")
+                    Text("Query audit entries to prove each decision and action is recorded.")
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+            }
+
+            GroupBox("Audit as Flight Recorder") {
+                VStack(alignment: .leading, spacing: 6) {
+                    Text("Audit entries are your cryptographic chain-of-custody log.")
+                    Text("Like a flight recorder, it helps reconstruct what changed, by whom, and in what order.")
+                    Text("Journalism example: prove an unpublished source file was never modified after legal review.")
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+            }
 
             GroupBox("Query") {
                 VStack(alignment: .leading, spacing: 8) {

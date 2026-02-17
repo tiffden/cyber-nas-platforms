@@ -74,6 +74,121 @@ final class CyberspaceMacUnitTests: XCTestCase {
         XCTAssertEqual(result.keys.first?.fingerprint, "legacy-fallback-hash")
     }
 
+    func testCLIBridgeKeysGenerateParsesJSON() async throws {
+        let fixture = try CLITestFixture()
+        let keygenExe = try fixture.writeExecutable(
+            named: "spki-keygen",
+            scriptBody: """
+            #!/bin/sh
+            if [ "$1" = "--json" ] && [ "$2" = "--output-dir" ] && [ "$4" = "--name" ] && [ "$5" = "alice" ]; then
+              echo '{"kind":"key_generate","name":"alice","algorithm":"ed25519","publicKeyPath":"'$3'/alice.public","privateKeyPath":"'$3'/alice.private","keyHash":"generated-hash"}'
+              exit 0
+            fi
+            echo 'unexpected args' >&2
+            exit 15
+            """
+        )
+
+        let client = CLIBridgeAPIClient(
+            environment: [
+                "SPKI_KEYGEN_BIN": keygenExe.path,
+                "PATH": ""
+            ],
+            keyDirectory: fixture.keyDirectoryURL
+        )
+
+        let result = try await client.keysGenerate(KeyGenerateRequest(name: "alice", algorithm: "ed25519"))
+        XCTAssertEqual(result.key.name, "alice")
+        XCTAssertEqual(result.key.algorithm, "ed25519")
+        XCTAssertEqual(result.key.fingerprint, "generated-hash")
+    }
+
+    func testCLIBridgeKeysGenerateRejectsUnsupportedAlgorithm() async throws {
+        let fixture = try CLITestFixture()
+        let keygenExe = try fixture.writeExecutable(
+            named: "spki-keygen",
+            scriptBody: """
+            #!/bin/sh
+            exit 0
+            """
+        )
+
+        let client = CLIBridgeAPIClient(
+            environment: [
+                "SPKI_KEYGEN_BIN": keygenExe.path,
+                "PATH": ""
+            ],
+            keyDirectory: fixture.keyDirectoryURL
+        )
+
+        do {
+            _ = try await client.keysGenerate(KeyGenerateRequest(name: "alice", algorithm: "rsa"))
+            XCTFail("Expected invalid_argument for unsupported algorithm")
+        } catch let error as APIErrorPayload {
+            XCTAssertEqual(error.code, "invalid_argument")
+        } catch {
+            XCTFail("Unexpected error type: \(error)")
+        }
+    }
+
+    func testCLIBridgeKeysGetParsesJSON() async throws {
+        let fixture = try CLITestFixture()
+        let showExe = try fixture.writeExecutable(
+            named: "spki-show",
+            scriptBody: """
+            #!/bin/sh
+            if [ "$1" = "--json" ] && [ "$2" = "\(fixture.keyDirectoryURL.path)/carol.public" ]; then
+              echo '{"kind":"public_key","algorithm":"ed25519","keyHash":"carol-hash","isPrivate":false}'
+              exit 0
+            fi
+            echo 'unexpected args' >&2
+            exit 16
+            """
+        )
+        try fixture.writePublicKey(named: "carol.public")
+
+        let client = CLIBridgeAPIClient(
+            environment: [
+                "SPKI_SHOW_BIN": showExe.path,
+                "PATH": ""
+            ],
+            keyDirectory: fixture.keyDirectoryURL
+        )
+
+        let result = try await client.keysGet(KeyGetRequest(name: "carol"))
+        XCTAssertEqual(result.key.name, "carol")
+        XCTAssertEqual(result.key.algorithm, "ed25519")
+        XCTAssertEqual(result.key.fingerprint, "carol-hash")
+    }
+
+    func testCLIBridgeKeysGetReturnsNotFoundWhenKeyMissing() async throws {
+        let fixture = try CLITestFixture()
+        let showExe = try fixture.writeExecutable(
+            named: "spki-show",
+            scriptBody: """
+            #!/bin/sh
+            exit 0
+            """
+        )
+
+        let client = CLIBridgeAPIClient(
+            environment: [
+                "SPKI_SHOW_BIN": showExe.path,
+                "PATH": ""
+            ],
+            keyDirectory: fixture.keyDirectoryURL
+        )
+
+        do {
+            _ = try await client.keysGet(KeyGetRequest(name: "missing"))
+            XCTFail("Expected not_found for unknown key")
+        } catch let error as APIErrorPayload {
+            XCTAssertEqual(error.code, "not_found")
+        } catch {
+            XCTFail("Unexpected error type: \(error)")
+        }
+    }
+
     func testCLIBridgeSystemStatusThrowsWhenExecutableMissing() async {
         let client = CLIBridgeAPIClient(
             environment: ["PATH": ""],
@@ -244,6 +359,297 @@ final class CyberspaceMacUnitTests: XCTestCase {
         )
         XCTAssertTrue(response.joined)
         XCTAssertTrue(response.message.contains("library-realm"))
+    }
+
+    func testCLIBridgeAuditQueryParsesJSON() async throws {
+        let fixture = try CLITestFixture()
+        let auditExe = try fixture.writeExecutable(
+            named: "spki-audit",
+            scriptBody: """
+            #!/bin/sh
+            if [ "$1" = "--json" ] && [ "$2" = "--query" ] && [ "$3" = "--filter" ] && [ "$4" = "actor=alice" ] && [ "$5" = "--limit" ] && [ "$6" = "25" ]; then
+              echo '{"kind":"audit_query","entries":[{"id":"evt-1","actor":"alice","action":"vault.commit","timestamp":"2026-02-16T23:10:00Z","context":"filter=actor=alice"}]}'
+              exit 0
+            fi
+            echo 'unexpected args' >&2
+            exit 7
+            """
+        )
+
+        let client = CLIBridgeAPIClient(
+            environment: [
+                "SPKI_AUDIT_BIN": auditExe.path,
+                "PATH": ""
+            ],
+            keyDirectory: fixture.keyDirectoryURL
+        )
+
+        let response = try await client.auditQuery(AuditQueryRequest(filter: "actor=alice", limit: 25))
+        XCTAssertEqual(response.entries.count, 1)
+        XCTAssertEqual(response.entries.first?.id, "evt-1")
+        XCTAssertEqual(response.entries.first?.actor, "alice")
+        XCTAssertEqual(response.entries.first?.action, "vault.commit")
+    }
+
+    func testCLIBridgeAuditQueryRejectsInvalidLimit() async throws {
+        let fixture = try CLITestFixture()
+        let auditExe = try fixture.writeExecutable(
+            named: "spki-audit",
+            scriptBody: """
+            #!/bin/sh
+            exit 0
+            """
+        )
+
+        let client = CLIBridgeAPIClient(
+            environment: [
+                "SPKI_AUDIT_BIN": auditExe.path,
+                "PATH": ""
+            ],
+            keyDirectory: fixture.keyDirectoryURL
+        )
+
+        do {
+            _ = try await client.auditQuery(AuditQueryRequest(filter: "", limit: 0))
+            XCTFail("Expected invalid_argument for non-positive limit")
+        } catch let error as APIErrorPayload {
+            XCTAssertEqual(error.code, "invalid_argument")
+        } catch {
+            XCTFail("Unexpected error type: \(error)")
+        }
+    }
+
+    func testCLIBridgeVaultGetParsesJSON() async throws {
+        let fixture = try CLITestFixture()
+        let vaultExe = try fixture.writeExecutable(
+            named: "spki-vault",
+            scriptBody: """
+            #!/bin/sh
+            if [ "$1" = "--json" ] && [ "$2" = "--get" ] && [ "$3" = "--path" ] && [ "$4" = "/library/demo.txt" ]; then
+              echo '{"kind":"vault_get","path":"/library/demo.txt","dataBase64":"aGVsbG8=","metadata":{"source":"test"}}'
+              exit 0
+            fi
+            echo 'unexpected args' >&2
+            exit 6
+            """
+        )
+
+        let client = CLIBridgeAPIClient(
+            environment: [
+                "SPKI_VAULT_BIN": vaultExe.path,
+                "PATH": ""
+            ],
+            keyDirectory: fixture.keyDirectoryURL
+        )
+
+        let response = try await client.vaultGet(VaultGetRequest(path: "/library/demo.txt"))
+        XCTAssertEqual(response.path, "/library/demo.txt")
+        XCTAssertEqual(response.dataBase64, "aGVsbG8=")
+        XCTAssertEqual(response.metadata["source"], "test")
+    }
+
+    func testCLIBridgeVaultPutParsesJSON() async throws {
+        let fixture = try CLITestFixture()
+        let vaultExe = try fixture.writeExecutable(
+            named: "spki-vault",
+            scriptBody: """
+            #!/bin/sh
+            if [ "$1" = "--json" ] && [ "$2" = "--put" ] && [ "$3" = "--path" ] && [ "$4" = "/library/demo.txt" ] && [ "$5" = "--data-base64" ] && [ "$6" = "aGVsbG8=" ]; then
+              echo '{"kind":"vault_put","path":"/library/demo.txt","revisionHint":"pending-commit"}'
+              exit 0
+            fi
+            echo 'unexpected args' >&2
+            exit 5
+            """
+        )
+
+        let client = CLIBridgeAPIClient(
+            environment: [
+                "SPKI_VAULT_BIN": vaultExe.path,
+                "PATH": ""
+            ],
+            keyDirectory: fixture.keyDirectoryURL
+        )
+
+        let response = try await client.vaultPut(
+            VaultPutRequest(path: "/library/demo.txt", dataBase64: "aGVsbG8=", metadata: [:])
+        )
+        XCTAssertEqual(response.path, "/library/demo.txt")
+        XCTAssertEqual(response.revisionHint, "pending-commit")
+    }
+
+    func testCLIBridgeVaultCommitParsesJSON() async throws {
+        let fixture = try CLITestFixture()
+        let vaultExe = try fixture.writeExecutable(
+            named: "spki-vault",
+            scriptBody: """
+            #!/bin/sh
+            if [ "$1" = "--json" ] && [ "$2" = "--commit" ] && [ "$3" = "--message" ] && [ "$4" = "UI commit" ]; then
+              echo '{"kind":"vault_commit","commitID":"abc123"}'
+              exit 0
+            fi
+            echo 'unexpected args' >&2
+            exit 4
+            """
+        )
+
+        let client = CLIBridgeAPIClient(
+            environment: [
+                "SPKI_VAULT_BIN": vaultExe.path,
+                "PATH": ""
+            ],
+            keyDirectory: fixture.keyDirectoryURL
+        )
+
+        let response = try await client.vaultCommit(VaultCommitRequest(message: "UI commit"))
+        XCTAssertEqual(response.commitID, "abc123")
+    }
+
+    func testCLIBridgeCertsCreateParsesJSON() async throws {
+        let fixture = try CLITestFixture()
+        let certsExe = try fixture.writeExecutable(
+            named: "spki-certs",
+            scriptBody: """
+            #!/bin/sh
+            if [ "$1" = "--json" ] && [ "$2" = "--create" ] && [ "$3" = "--issuer-principal" ] && [ "$4" = "alice" ] && [ "$5" = "--subject-principal" ] && [ "$6" = "bob" ] && [ "$7" = "--tag" ] && [ "$8" = "(read /library)" ] && [ "$9" = "--propagate" ]; then
+              echo '{"kind":"cert_create","certificateSexp":"(cert demo)"}'
+              exit 0
+            fi
+            echo 'unexpected args' >&2
+            exit 13
+            """
+        )
+
+        let client = CLIBridgeAPIClient(
+            environment: ["SPKI_CERTS_BIN": certsExe.path, "PATH": ""],
+            keyDirectory: fixture.keyDirectoryURL
+        )
+
+        let response = try await client.certsCreate(
+            CertCreateRequest(
+                issuerPrincipal: "alice",
+                subjectPrincipal: "bob",
+                tag: "(read /library)",
+                validityNotAfter: nil,
+                propagate: true
+            )
+        )
+        XCTAssertEqual(response.certificateSexp, "(cert demo)")
+    }
+
+    func testCLIBridgeCertsSignParsesJSON() async throws {
+        let fixture = try CLITestFixture()
+        let certsExe = try fixture.writeExecutable(
+            named: "spki-certs",
+            scriptBody: """
+            #!/bin/sh
+            if [ "$1" = "--json" ] && [ "$2" = "--sign" ] && [ "$3" = "--certificate-sexp" ] && [ "$4" = "(cert demo)" ] && [ "$5" = "--signer-key-name" ] && [ "$6" = "alice" ] && [ "$7" = "--hash-alg" ] && [ "$8" = "ed25519" ]; then
+              echo '{"kind":"cert_sign","signedCertificateSexp":"(signed demo)"}'
+              exit 0
+            fi
+            echo 'unexpected args' >&2
+            exit 12
+            """
+        )
+
+        let client = CLIBridgeAPIClient(
+            environment: ["SPKI_CERTS_BIN": certsExe.path, "PATH": ""],
+            keyDirectory: fixture.keyDirectoryURL
+        )
+
+        let response = try await client.certsSign(
+            CertSignRequest(
+                certificateSexp: "(cert demo)",
+                signerKeyName: "alice",
+                hashAlgorithm: "ed25519"
+            )
+        )
+        XCTAssertEqual(response.signedCertificateSexp, "(signed demo)")
+    }
+
+    func testCLIBridgeCertsVerifyParsesJSON() async throws {
+        let fixture = try CLITestFixture()
+        let certsExe = try fixture.writeExecutable(
+            named: "spki-certs",
+            scriptBody: """
+            #!/bin/sh
+            if [ "$1" = "--json" ] && [ "$2" = "--verify" ] && [ "$3" = "--signed-certificate-sexp" ] && [ "$4" = "(signed demo)" ] && [ "$5" = "--issuer-public-key" ] && [ "$6" = "issuer-pub" ]; then
+              echo '{"kind":"cert_verify","valid":true,"reason":"verified"}'
+              exit 0
+            fi
+            echo 'unexpected args' >&2
+            exit 11
+            """
+        )
+
+        let client = CLIBridgeAPIClient(
+            environment: ["SPKI_CERTS_BIN": certsExe.path, "PATH": ""],
+            keyDirectory: fixture.keyDirectoryURL
+        )
+
+        let response = try await client.certsVerify(
+            CertVerifyRequest(signedCertificateSexp: "(signed demo)", issuerPublicKey: "issuer-pub")
+        )
+        XCTAssertTrue(response.valid)
+        XCTAssertEqual(response.reason, "verified")
+    }
+
+    func testCLIBridgeAuthzVerifyChainParsesJSON() async throws {
+        let fixture = try CLITestFixture()
+        let authzExe = try fixture.writeExecutable(
+            named: "spki-authz",
+            scriptBody: """
+            #!/bin/sh
+            if [ "$1" = "--json" ] && [ "$2" = "--verify-chain" ] && [ "$3" = "--root-public-key" ] && [ "$4" = "root-pub" ] && [ "$5" = "--target-tag" ] && [ "$6" = "(read /library)" ] && [ "$7" = "--signed-certificate" ] && [ "$8" = "(signed demo)" ]; then
+              echo '{"kind":"authz_verify_chain","allowed":true,"reason":"chain verified","chainLength":1,"targetTag":"(read /library)"}'
+              exit 0
+            fi
+            echo 'unexpected args' >&2
+            exit 10
+            """
+        )
+
+        let client = CLIBridgeAPIClient(
+            environment: ["SPKI_AUTHZ_BIN": authzExe.path, "PATH": ""],
+            keyDirectory: fixture.keyDirectoryURL
+        )
+
+        let response = try await client.authzVerifyChain(
+            AuthzVerifyChainRequest(
+                rootPublicKey: "root-pub",
+                signedCertificates: ["(signed demo)"],
+                targetTag: "(read /library)"
+            )
+        )
+        XCTAssertTrue(response.allowed)
+        XCTAssertEqual(response.reason, "chain verified")
+    }
+
+    func testCLIBridgeAuthzVerifyChainRejectsMissingFields() async throws {
+        let fixture = try CLITestFixture()
+        let authzExe = try fixture.writeExecutable(
+            named: "spki-authz",
+            scriptBody: """
+            #!/bin/sh
+            exit 0
+            """
+        )
+
+        let client = CLIBridgeAPIClient(
+            environment: ["SPKI_AUTHZ_BIN": authzExe.path, "PATH": ""],
+            keyDirectory: fixture.keyDirectoryURL
+        )
+
+        do {
+            _ = try await client.authzVerifyChain(
+                AuthzVerifyChainRequest(rootPublicKey: "", signedCertificates: [], targetTag: "")
+            )
+            XCTFail("Expected invalid_argument for missing rootPublicKey/targetTag")
+        } catch let error as APIErrorPayload {
+            XCTAssertEqual(error.code, "invalid_argument")
+        } catch {
+            XCTFail("Unexpected error type: \(error)")
+        }
     }
 }
 

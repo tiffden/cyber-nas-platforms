@@ -117,52 +117,395 @@ struct CLIBridgeAPIClient: ClientAPI {
     }
 
     func keysGenerate(_ request: KeyGenerateRequest) async throws -> KeyGenerateResponse {
-        throw unavailable("keys.generate", details: ["name": request.name, "algorithm": request.algorithm])
+        guard !request.name.isEmpty else {
+            throw APIErrorPayload(
+                code: "invalid_argument",
+                message: "name is required",
+                details: nil
+            )
+        }
+        guard request.algorithm == "ed25519" else {
+            throw APIErrorPayload(
+                code: "invalid_argument",
+                message: "Unsupported algorithm",
+                details: ["algorithm": request.algorithm]
+            )
+        }
+
+        let keygenExecutable = try resolveExecutable(
+            overrideEnvVar: "SPKI_KEYGEN_BIN",
+            names: ["spki-keygen", "spki_keygen.exe"]
+        )
+
+        let output = try run(
+            executable: keygenExecutable,
+            arguments: [
+                "--json",
+                "--output-dir", keyDirectory.path,
+                "--name", request.name
+            ]
+        )
+        guard let data = output.data(using: .utf8) else {
+            throw APIErrorPayload(code: "internal_error", message: "Invalid key generate output encoding", details: nil)
+        }
+        guard let rawObject = try? JSONSerialization.jsonObject(with: data),
+              let object = rawObject as? [String: Any] else {
+            throw APIErrorPayload(code: "internal_error", message: "Malformed key generate JSON", details: nil)
+        }
+        guard (object["kind"] as? String) == "key_generate" else {
+            throw APIErrorPayload(code: "internal_error", message: "Unexpected key generate payload", details: nil)
+        }
+
+        let algorithm = object["algorithm"] as? String ?? request.algorithm
+        let fingerprint = object["keyHash"] as? String ?? "unknown"
+        let key = KeySummary(id: request.name, name: request.name, algorithm: algorithm, fingerprint: fingerprint)
+        return KeyGenerateResponse(key: key)
     }
 
     func keysGet(_ request: KeyGetRequest) async throws -> KeyGetResponse {
-        throw unavailable("keys.get", details: ["name": request.name])
+        guard !request.name.isEmpty else {
+            throw APIErrorPayload(
+                code: "invalid_argument",
+                message: "name is required",
+                details: nil
+            )
+        }
+
+        let showExecutable = try resolveExecutable(
+            overrideEnvVar: "SPKI_SHOW_BIN",
+            names: ["spki-show", "spki_show.exe"]
+        )
+
+        let keyFile = try findKeyFile(named: request.name)
+        if let summary = try parseKeySummaryFromJSON(
+            executable: showExecutable,
+            fileURL: keyFile,
+            fallbackName: request.name
+        ) {
+            return KeyGetResponse(key: summary)
+        }
+
+        let output = try run(executable: showExecutable, arguments: [keyFile.path])
+        let fingerprint = parseKeyHash(fromShowOutput: output) ?? "unknown"
+        return KeyGetResponse(
+            key: KeySummary(
+                id: request.name,
+                name: request.name,
+                algorithm: "ed25519",
+                fingerprint: fingerprint
+            )
+        )
     }
 
     func certsCreate(_ request: CertCreateRequest) async throws -> CertCreateResponse {
-        throw unavailable(
-            "certs.create",
-            details: [
-                "issuer": request.issuerPrincipal,
-                "subject": request.subjectPrincipal
-            ]
+        guard !request.issuerPrincipal.isEmpty, !request.subjectPrincipal.isEmpty, !request.tag.isEmpty else {
+            throw APIErrorPayload(
+                code: "invalid_argument",
+                message: "issuerPrincipal, subjectPrincipal, and tag are required",
+                details: nil
+            )
+        }
+
+        let certsExecutable = try resolveExecutable(
+            overrideEnvVar: "SPKI_CERTS_BIN",
+            names: ["spki-certs", "spki_certs.exe"]
         )
+
+        var args = [
+            "--json",
+            "--create",
+            "--issuer-principal", request.issuerPrincipal,
+            "--subject-principal", request.subjectPrincipal,
+            "--tag", request.tag
+        ]
+        if let notAfter = request.validityNotAfter, !notAfter.isEmpty {
+            args += ["--not-after", notAfter]
+        }
+        if request.propagate {
+            args.append("--propagate")
+        }
+
+        let output = try run(executable: certsExecutable, arguments: args)
+        guard let data = output.data(using: .utf8) else {
+            throw APIErrorPayload(code: "internal_error", message: "Invalid cert create output encoding", details: nil)
+        }
+        guard let rawObject = try? JSONSerialization.jsonObject(with: data),
+              let object = rawObject as? [String: Any] else {
+            throw APIErrorPayload(code: "internal_error", message: "Malformed cert create JSON", details: nil)
+        }
+        guard (object["kind"] as? String) == "cert_create" else {
+            throw APIErrorPayload(code: "internal_error", message: "Unexpected cert create payload", details: nil)
+        }
+
+        return CertCreateResponse(certificateSexp: object["certificateSexp"] as? String ?? "")
     }
 
     func certsSign(_ request: CertSignRequest) async throws -> CertSignResponse {
-        throw unavailable("certs.sign", details: ["signerKeyName": request.signerKeyName])
+        guard !request.certificateSexp.isEmpty, !request.signerKeyName.isEmpty else {
+            throw APIErrorPayload(
+                code: "invalid_argument",
+                message: "certificateSexp and signerKeyName are required",
+                details: nil
+            )
+        }
+
+        let certsExecutable = try resolveExecutable(
+            overrideEnvVar: "SPKI_CERTS_BIN",
+            names: ["spki-certs", "spki_certs.exe"]
+        )
+
+        let output = try run(
+            executable: certsExecutable,
+            arguments: [
+                "--json",
+                "--sign",
+                "--certificate-sexp", request.certificateSexp,
+                "--signer-key-name", request.signerKeyName,
+                "--hash-alg", request.hashAlgorithm
+            ]
+        )
+
+        guard let data = output.data(using: .utf8) else {
+            throw APIErrorPayload(code: "internal_error", message: "Invalid cert sign output encoding", details: nil)
+        }
+        guard let rawObject = try? JSONSerialization.jsonObject(with: data),
+              let object = rawObject as? [String: Any] else {
+            throw APIErrorPayload(code: "internal_error", message: "Malformed cert sign JSON", details: nil)
+        }
+        guard (object["kind"] as? String) == "cert_sign" else {
+            throw APIErrorPayload(code: "internal_error", message: "Unexpected cert sign payload", details: nil)
+        }
+
+        return CertSignResponse(signedCertificateSexp: object["signedCertificateSexp"] as? String ?? "")
     }
 
     func certsVerify(_ request: CertVerifyRequest) async throws -> CertVerifyResponse {
-        throw unavailable("certs.verify", details: nil)
+        guard !request.signedCertificateSexp.isEmpty, !request.issuerPublicKey.isEmpty else {
+            throw APIErrorPayload(
+                code: "invalid_argument",
+                message: "signedCertificateSexp and issuerPublicKey are required",
+                details: nil
+            )
+        }
+
+        let certsExecutable = try resolveExecutable(
+            overrideEnvVar: "SPKI_CERTS_BIN",
+            names: ["spki-certs", "spki_certs.exe"]
+        )
+
+        let output = try run(
+            executable: certsExecutable,
+            arguments: [
+                "--json",
+                "--verify",
+                "--signed-certificate-sexp", request.signedCertificateSexp,
+                "--issuer-public-key", request.issuerPublicKey
+            ]
+        )
+
+        guard let data = output.data(using: .utf8) else {
+            throw APIErrorPayload(code: "internal_error", message: "Invalid cert verify output encoding", details: nil)
+        }
+        guard let rawObject = try? JSONSerialization.jsonObject(with: data),
+              let object = rawObject as? [String: Any] else {
+            throw APIErrorPayload(code: "internal_error", message: "Malformed cert verify JSON", details: nil)
+        }
+        guard (object["kind"] as? String) == "cert_verify" else {
+            throw APIErrorPayload(code: "internal_error", message: "Unexpected cert verify payload", details: nil)
+        }
+
+        return CertVerifyResponse(
+            valid: object["valid"] as? Bool ?? false,
+            reason: object["reason"] as? String ?? "unknown"
+        )
     }
 
     func authzVerifyChain(_ request: AuthzVerifyChainRequest) async throws -> AuthzVerifyChainResponse {
-        throw unavailable("authz.verify_chain", details: ["targetTag": request.targetTag])
+        guard !request.rootPublicKey.isEmpty, !request.targetTag.isEmpty else {
+            throw APIErrorPayload(
+                code: "invalid_argument",
+                message: "rootPublicKey and targetTag are required",
+                details: nil
+            )
+        }
+
+        let authzExecutable = try resolveExecutable(
+            overrideEnvVar: "SPKI_AUTHZ_BIN",
+            names: ["spki-authz", "spki_authz.exe"]
+        )
+
+        var args = [
+            "--json",
+            "--verify-chain",
+            "--root-public-key", request.rootPublicKey,
+            "--target-tag", request.targetTag
+        ]
+        for cert in request.signedCertificates {
+            args += ["--signed-certificate", cert]
+        }
+
+        let output = try run(executable: authzExecutable, arguments: args)
+        guard let data = output.data(using: .utf8) else {
+            throw APIErrorPayload(code: "internal_error", message: "Invalid authz output encoding", details: nil)
+        }
+        guard let rawObject = try? JSONSerialization.jsonObject(with: data),
+              let object = rawObject as? [String: Any] else {
+            throw APIErrorPayload(code: "internal_error", message: "Malformed authz verify JSON", details: nil)
+        }
+        guard (object["kind"] as? String) == "authz_verify_chain" else {
+            throw APIErrorPayload(code: "internal_error", message: "Unexpected authz verify payload", details: nil)
+        }
+
+        return AuthzVerifyChainResponse(
+            allowed: object["allowed"] as? Bool ?? false,
+            reason: object["reason"] as? String ?? "unknown"
+        )
     }
 
     func vaultGet(_ request: VaultGetRequest) async throws -> VaultGetResponse {
-        throw unavailable("vault.get", details: ["path": request.path])
+        guard !request.path.isEmpty else {
+            throw APIErrorPayload(code: "invalid_argument", message: "path is required", details: nil)
+        }
+
+        let vaultExecutable = try resolveExecutable(
+            overrideEnvVar: "SPKI_VAULT_BIN",
+            names: ["spki-vault", "spki_vault.exe"]
+        )
+
+        let output = try run(
+            executable: vaultExecutable,
+            arguments: ["--json", "--get", "--path", request.path]
+        )
+
+        guard let data = output.data(using: .utf8) else {
+            throw APIErrorPayload(code: "internal_error", message: "Invalid vault get output encoding", details: nil)
+        }
+        guard let rawObject = try? JSONSerialization.jsonObject(with: data),
+              let object = rawObject as? [String: Any] else {
+            throw APIErrorPayload(code: "internal_error", message: "Malformed vault get JSON", details: nil)
+        }
+        guard (object["kind"] as? String) == "vault_get" else {
+            throw APIErrorPayload(code: "internal_error", message: "Unexpected vault get payload", details: nil)
+        }
+
+        let metadata = object["metadata"] as? [String: String] ?? [:]
+        return VaultGetResponse(
+            path: object["path"] as? String ?? request.path,
+            dataBase64: object["dataBase64"] as? String ?? "",
+            metadata: metadata
+        )
     }
 
     func vaultPut(_ request: VaultPutRequest) async throws -> VaultPutResponse {
-        throw unavailable("vault.put", details: ["path": request.path])
+        guard !request.path.isEmpty else {
+            throw APIErrorPayload(code: "invalid_argument", message: "path is required", details: nil)
+        }
+        guard !request.dataBase64.isEmpty else {
+            throw APIErrorPayload(code: "invalid_argument", message: "dataBase64 is required", details: nil)
+        }
+
+        let vaultExecutable = try resolveExecutable(
+            overrideEnvVar: "SPKI_VAULT_BIN",
+            names: ["spki-vault", "spki_vault.exe"]
+        )
+
+        let output = try run(
+            executable: vaultExecutable,
+            arguments: ["--json", "--put", "--path", request.path, "--data-base64", request.dataBase64]
+        )
+
+        guard let data = output.data(using: .utf8) else {
+            throw APIErrorPayload(code: "internal_error", message: "Invalid vault put output encoding", details: nil)
+        }
+        guard let rawObject = try? JSONSerialization.jsonObject(with: data),
+              let object = rawObject as? [String: Any] else {
+            throw APIErrorPayload(code: "internal_error", message: "Malformed vault put JSON", details: nil)
+        }
+        guard (object["kind"] as? String) == "vault_put" else {
+            throw APIErrorPayload(code: "internal_error", message: "Unexpected vault put payload", details: nil)
+        }
+
+        return VaultPutResponse(
+            path: object["path"] as? String ?? request.path,
+            revisionHint: object["revisionHint"] as? String ?? "unknown"
+        )
     }
 
     func vaultCommit(_ request: VaultCommitRequest) async throws -> VaultCommitResponse {
-        throw unavailable("vault.commit", details: nil)
+        guard !request.message.isEmpty else {
+            throw APIErrorPayload(code: "invalid_argument", message: "commit message is required", details: nil)
+        }
+
+        let vaultExecutable = try resolveExecutable(
+            overrideEnvVar: "SPKI_VAULT_BIN",
+            names: ["spki-vault", "spki_vault.exe"]
+        )
+
+        let output = try run(
+            executable: vaultExecutable,
+            arguments: ["--json", "--commit", "--message", request.message]
+        )
+
+        guard let data = output.data(using: .utf8) else {
+            throw APIErrorPayload(code: "internal_error", message: "Invalid vault commit output encoding", details: nil)
+        }
+        guard let rawObject = try? JSONSerialization.jsonObject(with: data),
+              let object = rawObject as? [String: Any] else {
+            throw APIErrorPayload(code: "internal_error", message: "Malformed vault commit JSON", details: nil)
+        }
+        guard (object["kind"] as? String) == "vault_commit" else {
+            throw APIErrorPayload(code: "internal_error", message: "Unexpected vault commit payload", details: nil)
+        }
+
+        return VaultCommitResponse(commitID: object["commitID"] as? String ?? "unknown")
     }
 
     func auditQuery(_ request: AuditQueryRequest) async throws -> AuditQueryResponse {
-        throw unavailable(
-            "audit.query",
-            details: ["filter": request.filter, "limit": String(request.limit)]
+        guard request.limit > 0 else {
+            throw APIErrorPayload(
+                code: "invalid_argument",
+                message: "limit must be > 0",
+                details: ["limit": String(request.limit)]
+            )
+        }
+
+        let auditExecutable = try resolveExecutable(
+            overrideEnvVar: "SPKI_AUDIT_BIN",
+            names: ["spki-audit", "spki_audit.exe"]
         )
+
+        let output = try run(
+            executable: auditExecutable,
+            arguments: [
+                "--json",
+                "--query",
+                "--filter", request.filter,
+                "--limit", String(request.limit)
+            ]
+        )
+
+        guard let data = output.data(using: .utf8) else {
+            throw APIErrorPayload(code: "internal_error", message: "Invalid audit output encoding", details: nil)
+        }
+        guard let rawObject = try? JSONSerialization.jsonObject(with: data),
+              let object = rawObject as? [String: Any] else {
+            throw APIErrorPayload(code: "internal_error", message: "Malformed audit query JSON", details: nil)
+        }
+        guard (object["kind"] as? String) == "audit_query" else {
+            throw APIErrorPayload(code: "internal_error", message: "Unexpected audit query payload", details: nil)
+        }
+
+        let entries = (object["entries"] as? [[String: Any]] ?? []).map { item in
+            AuditEntry(
+                id: item["id"] as? String ?? UUID().uuidString,
+                actor: item["actor"] as? String ?? "unknown",
+                action: item["action"] as? String ?? "unknown",
+                timestamp: item["timestamp"] as? String ?? "",
+                context: item["context"] as? String ?? ""
+            )
+        }
+
+        return AuditQueryResponse(entries: entries)
     }
 
     func realmStatus() async throws -> RealmStatus {
@@ -380,6 +723,22 @@ struct CLIBridgeAPIClient: ClientAPI {
             }
         }
         return nil
+    }
+
+    private func findKeyFile(named name: String) throws -> URL {
+        let fm = FileManager.default
+        let candidates = [
+            keyDirectory.appendingPathComponent("\(name).public"),
+            keyDirectory.appendingPathComponent("\(name).pub")
+        ]
+        for candidate in candidates where fm.fileExists(atPath: candidate.path) {
+            return candidate
+        }
+        throw APIErrorPayload(
+            code: "not_found",
+            message: "key not found",
+            details: ["name": name, "keyDirectory": keyDirectory.path]
+        )
     }
 
     private func formatUptime(seconds: Int) -> String {

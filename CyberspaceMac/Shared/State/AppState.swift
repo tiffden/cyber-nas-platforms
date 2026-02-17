@@ -2,30 +2,38 @@ import Combine
 import Foundation
 
 enum AppRoute: String, CaseIterable, Hashable, Identifiable {
-    case onboarding
+    case startHere
+    case currentStatus
+    case generateIdentityKeys
+    case createInitialRealm
+    case issueCertificates
+    case inviteJoinRealm
+    case testAccess
+    case revokeReissue
     case terminal
-    case keyring
-    case certificates
-    case audit
-    case realm
+    case help
 
     var id: String { rawValue }
 
     var title: String {
         switch self {
-        case .onboarding: return "Onboarding"
+        case .startHere: return "Start Here"
+        case .currentStatus: return "Current Status"
+        case .generateIdentityKeys: return "Generate Identity Keys"
+        case .createInitialRealm: return "Create Initial Realm"
+        case .issueCertificates: return "Issue Certificates"
+        case .inviteJoinRealm: return "Invite & Join Realm"
+        case .testAccess: return "Test Access"
+        case .revokeReissue: return "Revoke & Re-Issue"
         case .terminal: return "Terminal"
-        case .keyring: return "Keyring"
-        case .certificates: return "Certificates"
-        case .audit: return "Audit"
-        case .realm: return "Realm"
+        case .help: return "Help"
         }
     }
 }
 
 @MainActor
 final class AppState: ObservableObject {
-    @Published var selectedRoute: AppRoute? = .onboarding
+    @Published var selectedRoute: AppRoute? = .startHere
 
     @Published var systemStatus = SystemStatus(status: "loading", uptime: "n/a")
     @Published var keys: [KeySummary] = []

@@ -12,19 +12,27 @@ struct RootView: View {
             }
             .navigationTitle("Cyberspace")
         } detail: {
-            switch appState.selectedRoute ?? .onboarding {
-            case .onboarding:
-                OnboardingScreen()
+            switch appState.selectedRoute ?? .startHere {
+            case .startHere:
+                StartHereScreen()
+            case .currentStatus:
+                CurrentStatusScreen()
+            case .generateIdentityKeys:
+                KeyringScreen()
+            case .createInitialRealm:
+                RealmScreen()
+            case .issueCertificates:
+                CertificatesScreen()
+            case .inviteJoinRealm:
+                RealmScreen()
+            case .testAccess:
+                AuditScreen()
+            case .revokeReissue:
+                CertificatesScreen()
             case .terminal:
                 TerminalScreen()
-            case .keyring:
-                KeyringScreen()
-            case .certificates:
-                CertificatesScreen()
-            case .audit:
-                AuditScreen()
-            case .realm:
-                RealmScreen()
+            case .help:
+                HelpScreen()
             }
         }
         .task {

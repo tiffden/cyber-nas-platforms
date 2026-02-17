@@ -5,17 +5,31 @@ struct TerminalScreen: View {
     Cyberspace Terminal
     -------------------
     Scaffold mode: no REPL process connected yet.
+
+    Intended use:
+    - Inspect trust state directly
+    - Verify signatures before publishing
+    - Run emergency checks when automation is unavailable
     """
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
             HStack {
-                Text("Terminal")
+                Text("Step 9: Terminal")
                     .font(.title2.weight(.semibold))
                 Spacer()
                 Button("Clear") {
                     terminalText = ""
                 }
+            }
+
+            GroupBox("Task Stub") {
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("Use terminal mode for direct inspection and emergency operations.")
+                    Text("Run status, realm, cert, authz, vault, and audit commands when UI flow is insufficient.")
+                    Text("Keep this as an operator tool; routine onboarding should stay in guided pages.")
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
             }
 
             TerminalTextView(text: $terminalText)

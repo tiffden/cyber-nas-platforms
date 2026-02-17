@@ -8,14 +8,23 @@ struct OnboardingScreen: View {
             Text("Welcome to Cyberspace")
                 .font(.largeTitle.weight(.bold))
 
-            Text("This app helps you manage cryptographic identity, authorization, and audit trails.")
+            Text("Cyberspace helps you prove identity, delegate access safely, and verify what happened.")
                 .foregroundStyle(.secondary)
 
-            GroupBox("Trust Model (Simple)") {
+            GroupBox("Core Ideas (Plain Language)") {
                 VStack(alignment: .leading, spacing: 8) {
-                    Text("1. Principals are cryptographic identities.")
-                    Text("2. Certificates delegate capabilities.")
-                    Text("3. Audit logs are tamper-evident.")
+                    Text("1. Identity key: your cryptographic passport.")
+                    Text("2. Capability certificate: a signed keycard with specific permissions.")
+                    Text("3. Audit trail: a tamper-evident flight recorder for decisions and actions.")
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+            }
+
+            GroupBox("Why Journalists Use This") {
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("You can grant a fixer upload-only rights to one story folder without giving full archive access.")
+                    Text("You can prove a source package came from a trusted desk key before publication.")
+                    Text("You can show editors and legal exactly who approved access, and when.")
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
             }
