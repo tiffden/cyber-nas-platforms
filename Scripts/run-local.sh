@@ -58,6 +58,20 @@ export SPKI_CHEZ_LIBDIR="${SPKI_CHEZ_LIBDIR:-$SPKI_ROOT/scheme/chez}"
 export SPKI_REALM_WORKDIR="${SPKI_REALM_WORKDIR:-$SPKI_ROOT/scheme/chez}"
 export PATH="$HOME/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:$PATH"
 
+if ! command -v swift >/dev/null 2>&1; then
+  echo "Error: swift not found. Please install Swift or Xcode Command Line Tools and ensure 'swift' is on your PATH."
+  exit 1
+fi
+
 echo "Launching Cyberspace UI..."
-cd "$UI_ROOT"
-swift run CyberspaceMac
+cd "$UI_ROOT" || {
+  echo "Error: failed to change directory to $UI_ROOT"
+  exit 1
+}
+if swift run CyberspaceMac; then
+  :
+else
+  status=$?
+  echo "Error: failed to launch Cyberspace UI (swift exited with status $status)."
+  exit "$status"
+fi
