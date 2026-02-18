@@ -576,45 +576,123 @@ struct CLIBridgeAPIClient: ClientAPI {
         )
     }
 
-    func createRealmTestEnvironment(nodeCount: Int) async throws -> RealmHarnessInitResponse {
+    func createRealmTestEnvironment(
+        nodeCount: Int,
+        config: RealmHarnessCreateConfig?,
+        requestID: String?
+    ) async throws -> RealmHarnessInitResponse {
         guard nodeCount > 0 else {
             throw APIErrorPayload(code: "invalid_argument", message: "nodeCount must be > 0", details: nil)
         }
         // Delegate setup to the shell harness so UI/API use the same node bootstrap path as CLI workflows.
         let harnessScript = try resolveHarnessScript()
-        _ = try run(executable: harnessScript, arguments: ["init", String(nodeCount)])
-        let nodes = try await realmHarnessNodes(nodeCount: nodeCount)
+        let harnessEnv = harnessEnvironment(config: config)
+        _ = try run(
+            executable: harnessScript,
+            arguments: ["init", String(nodeCount)],
+            environment: harnessEnv,
+            requestID: requestID,
+            action: "harness.init"
+        )
+        let nodes = try await realmHarnessNodes(nodeCount: nodeCount, config: config, requestID: requestID)
         return RealmHarnessInitResponse(nodeCount: nodeCount, nodes: nodes)
     }
 
-    func launchRealmHarnessUIs(nodeCount: Int) async throws -> RealmHarnessLaunchResponse {
+    func selfJoinRealmHarness(
+        nodeCount: Int,
+        config: RealmHarnessCreateConfig?,
+        requestID: String?
+    ) async throws -> RealmHarnessLaunchResponse {
         guard nodeCount > 0 else {
             throw APIErrorPayload(code: "invalid_argument", message: "nodeCount must be > 0", details: nil)
         }
         let harnessScript = try resolveHarnessScript()
+        let harnessEnv = harnessEnvironment(config: config)
+        let output = try run(
+            executable: harnessScript,
+            arguments: ["self-join", String(nodeCount)],
+            environment: harnessEnv,
+            requestID: requestID,
+            action: "harness.self_join"
+        )
+        return RealmHarnessLaunchResponse(nodeCount: nodeCount, output: output.trimmingCharacters(in: .whitespacesAndNewlines))
+    }
+
+    func inviteOtherRealmHarnessNodes(
+        nodeCount: Int,
+        config: RealmHarnessCreateConfig?,
+        requestID: String?
+    ) async throws -> RealmHarnessLaunchResponse {
+        guard nodeCount > 1 else {
+            throw APIErrorPayload(code: "invalid_argument", message: "nodeCount must be > 1", details: nil)
+        }
+        let harnessScript = try resolveHarnessScript()
+        let harnessEnv = harnessEnvironment(config: config)
+        let output = try run(
+            executable: harnessScript,
+            arguments: ["invite-all", String(nodeCount)],
+            environment: harnessEnv,
+            requestID: requestID,
+            action: "harness.invite_all"
+        )
+        return RealmHarnessLaunchResponse(nodeCount: nodeCount, output: output.trimmingCharacters(in: .whitespacesAndNewlines))
+    }
+
+    func launchRealmHarnessUIs(
+        nodeCount: Int,
+        config: RealmHarnessCreateConfig?,
+        requestID: String?
+    ) async throws -> RealmHarnessLaunchResponse {
+        guard nodeCount > 0 else {
+            throw APIErrorPayload(code: "invalid_argument", message: "nodeCount must be > 0", details: nil)
+        }
+        let harnessScript = try resolveHarnessScript()
+        let harnessEnv = harnessEnvironment(config: config)
         // Use the harness wrapper so each UI gets isolated env and its own log file.
-        let output = try run(executable: harnessScript, arguments: ["ui-all-bg", String(nodeCount)])
+        let output = try run(
+            executable: harnessScript,
+            arguments: ["ui-all-bg", String(nodeCount)],
+            environment: harnessEnv,
+            requestID: requestID,
+            action: "harness.ui_all_bg"
+        )
         return RealmHarnessLaunchResponse(nodeCount: nodeCount, output: output.trimmingCharacters(in: .whitespacesAndNewlines))
     }
 
-    func stopRealmHarnessUIs(nodeCount: Int) async throws -> RealmHarnessLaunchResponse {
+    func stopRealmHarnessUIs(
+        nodeCount: Int,
+        config: RealmHarnessCreateConfig?,
+        requestID: String?
+    ) async throws -> RealmHarnessLaunchResponse {
         guard nodeCount > 0 else {
             throw APIErrorPayload(code: "invalid_argument", message: "nodeCount must be > 0", details: nil)
         }
         let harnessScript = try resolveHarnessScript()
-        let output = try run(executable: harnessScript, arguments: ["stop-all-bg", String(nodeCount)])
+        let harnessEnv = harnessEnvironment(config: config)
+        let output = try run(
+            executable: harnessScript,
+            arguments: ["stop-all-bg", String(nodeCount)],
+            environment: harnessEnv,
+            requestID: requestID,
+            action: "harness.stop_all_bg"
+        )
         return RealmHarnessLaunchResponse(nodeCount: nodeCount, output: output.trimmingCharacters(in: .whitespacesAndNewlines))
     }
 
-    func realmHarnessNodes(nodeCount: Int) async throws -> [RealmHarnessNodeMetadata] {
+    func realmHarnessNodes(
+        nodeCount: Int,
+        config: RealmHarnessCreateConfig?,
+        requestID: String?
+    ) async throws -> [RealmHarnessNodeMetadata] {
         guard nodeCount > 0 else {
             throw APIErrorPayload(code: "invalid_argument", message: "nodeCount must be > 0", details: nil)
         }
-        let harnessRoot = realmHarnessRoot()
+        let harnessRoot = realmHarnessRoot(config: config)
         let realmExecutable = try resolveExecutable(
             overrideEnvVar: "SPKI_REALM_BIN",
             names: ["spki-realm", "spki_realm.exe"]
         )
+        let harnessEnv = harnessEnvironment(config: config)
         var nodes: [RealmHarnessNodeMetadata] = []
         nodes.reserveCapacity(nodeCount)
 
@@ -624,7 +702,7 @@ struct CLIBridgeAPIClient: ClientAPI {
                 .appendingPathComponent("node.env", isDirectory: false)
             let parsedEnv = try parseNodeEnv(fileURL: envURL)
 
-            var mergedEnv = environment
+            var mergedEnv = harnessEnv
             for (key, value) in parsedEnv {
                 mergedEnv[key] = value
             }
@@ -633,17 +711,21 @@ struct CLIBridgeAPIClient: ClientAPI {
             let output = try run(
                 executable: realmExecutable,
                 arguments: ["--json", "--status"],
-                environment: mergedEnv
+                environment: mergedEnv,
+                requestID: requestID,
+                action: "harness.status.node\(id)"
             )
             let status = try parseRealmStatusOutput(output)
 
             let workdir = parsedEnv["SPKI_REALM_WORKDIR"] ?? ""
             let keydir = parsedEnv["SPKI_KEY_DIR"] ?? ""
+            let nodeName = parsedEnv["SPKI_NODE_NAME"] ?? "node\(id)"
             let host = parsedEnv["SPKI_JOIN_HOST"] ?? "127.0.0.1"
             let port = Int(parsedEnv["SPKI_NODE_PORT"] ?? "") ?? (7779 + id)
             nodes.append(
                 RealmHarnessNodeMetadata(
                     id: id,
+                    nodeName: nodeName,
                     envFile: envURL.path,
                     workdir: workdir,
                     keydir: keydir,
@@ -658,24 +740,61 @@ struct CLIBridgeAPIClient: ClientAPI {
         return nodes
     }
 
-    func realmHarnessCurrentLog(nodeID: Int, maxLines: Int) async throws -> String {
+    func realmHarnessCurrentLog(
+        nodeID: Int,
+        maxLines: Int,
+        config: RealmHarnessCreateConfig?,
+        requestID _: String?
+    ) async throws -> String {
         guard nodeID > 0 else {
             throw APIErrorPayload(code: "invalid_argument", message: "nodeID must be > 0", details: nil)
         }
         // Bound the tail size to keep UI refresh cheap even when logs grow large.
         let clamped = max(10, min(5000, maxLines))
-        let logURL = realmHarnessRoot()
+        let nodeLogsRoot = realmHarnessRoot(config: config)
             .appendingPathComponent("node\(nodeID)", isDirectory: true)
             .appendingPathComponent("logs", isDirectory: true)
-            .appendingPathComponent("ui.log", isDirectory: false)
+        let realmLogURL = nodeLogsRoot.appendingPathComponent("realm.log", isDirectory: false)
+        let nodeLogURL = nodeLogsRoot.appendingPathComponent("node.log", isDirectory: false)
 
-        guard FileManager.default.fileExists(atPath: logURL.path) else {
-            return "No log file yet at \(logURL.path).\nLaunch UI for this node first."
+        let fm = FileManager.default
+        let hasRealmLog = fm.fileExists(atPath: realmLogURL.path)
+        let hasNodeLog = fm.fileExists(atPath: nodeLogURL.path)
+        guard hasRealmLog || hasNodeLog else {
+            return """
+            No per-node logs yet for node \(nodeID).
+            Expected files:
+            - \(realmLogURL.path)
+            - \(nodeLogURL.path)
+            """
         }
-        let text = try String(contentsOf: logURL, encoding: .utf8)
-        let lines = text.split(separator: "\n", omittingEmptySubsequences: false)
-        let tail = lines.suffix(clamped).joined(separator: "\n")
-        return String(tail)
+
+        var combined: [String] = []
+        if hasRealmLog {
+            let realmText = try String(contentsOf: realmLogURL, encoding: .utf8)
+            combined.append("=== realm.log ===")
+            combined.append(
+                contentsOf: realmText
+                    .split(separator: "\n", omittingEmptySubsequences: false)
+                    .map(String.init)
+                    .filter { !$0.contains("\"action\":\"harness.log_tail\"") }
+            )
+        }
+        if hasNodeLog {
+            let uiText = try String(contentsOf: nodeLogURL, encoding: .utf8)
+            if !combined.isEmpty {
+                combined.append("")
+            }
+            combined.append("=== node.log ===")
+            combined.append(
+                contentsOf: uiText
+                    .split(separator: "\n", omittingEmptySubsequences: false)
+                    .map(String.init)
+                    .filter { !$0.contains("\"action\":\"harness.log_tail\"") }
+            )
+        }
+
+        return combined.suffix(clamped).joined(separator: "\n")
     }
 
     private func resolveExecutable(
@@ -733,18 +852,53 @@ struct CLIBridgeAPIClient: ClientAPI {
         return nil
     }
 
-    private func run(executable: URL, arguments: [String]) throws -> String {
-        try run(executable: executable, arguments: arguments, environment: environment)
+    private func run(
+        executable: URL,
+        arguments: [String],
+        requestID: String? = nil,
+        action: String? = nil
+    ) throws -> String {
+        try run(
+            executable: executable,
+            arguments: arguments,
+            environment: environment,
+            requestID: requestID,
+            action: action
+        )
     }
 
-    private func run(executable: URL, arguments: [String], environment: [String: String]) throws -> String {
+    private func run(
+        executable: URL,
+        arguments: [String],
+        environment: [String: String],
+        requestID: String? = nil,
+        action: String? = nil
+    ) throws -> String {
+        let started = Date()
+        let resolvedRequestID = requestID ?? environment["SPKI_REQUEST_ID"] ?? UUID().uuidString.lowercased()
+        let actionName = action ?? executable.lastPathComponent
+        logEvent(
+            level: "info",
+            action: actionName,
+            result: "start",
+            requestID: resolvedRequestID,
+            fields: [
+                "command": executable.lastPathComponent,
+                "arg_count": String(arguments.count)
+            ]
+        )
+
         let process = Process()
         let outputPipe = Pipe()
         let errorPipe = Pipe()
 
         process.executableURL = executable
         process.arguments = arguments
-        process.environment = environment
+        var processEnvironment = environment
+        if processEnvironment["SPKI_REQUEST_ID"] == nil || processEnvironment["SPKI_REQUEST_ID"]?.isEmpty == true {
+            processEnvironment["SPKI_REQUEST_ID"] = resolvedRequestID
+        }
+        process.environment = processEnvironment
         process.standardOutput = outputPipe
         process.standardError = errorPipe
 
@@ -755,6 +909,17 @@ struct CLIBridgeAPIClient: ClientAPI {
         let stderr = String(data: errorPipe.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8) ?? ""
 
         guard process.terminationStatus == 0 else {
+            logEvent(
+                level: "error",
+                action: actionName,
+                result: "error",
+                requestID: resolvedRequestID,
+                fields: [
+                    "command": executable.lastPathComponent,
+                    "status": String(process.terminationStatus),
+                    "duration_ms": String(Int(Date().timeIntervalSince(started) * 1000))
+                ]
+            )
             throw APIErrorPayload(
                 code: "internal_error",
                 message: "CLI command failed",
@@ -766,7 +931,46 @@ struct CLIBridgeAPIClient: ClientAPI {
             )
         }
 
+        logEvent(
+            level: "info",
+            action: actionName,
+            result: "ok",
+            requestID: resolvedRequestID,
+            fields: [
+                "command": executable.lastPathComponent,
+                "duration_ms": String(Int(Date().timeIntervalSince(started) * 1000)),
+                "stdout_bytes": String(stdout.utf8.count),
+                "stderr_bytes": String(stderr.utf8.count)
+            ]
+        )
+
         return stdout
+    }
+
+    private func logEvent(
+        level: String,
+        action: String,
+        result: String,
+        requestID: String?,
+        fields: [String: String] = [:]
+    ) {
+        var payload: [String: String] = [
+            "ts": ISO8601DateFormatter().string(from: Date()),
+            "level": level,
+            "component": "cli_bridge",
+            "action": action,
+            "result": result,
+            "request_id": requestID ?? "n/a"
+        ]
+        for (key, value) in fields {
+            payload[key] = value
+        }
+        guard let data = try? JSONSerialization.data(withJSONObject: payload, options: [.sortedKeys]),
+              let line = String(data: data, encoding: .utf8) else {
+            return
+        }
+        guard let encoded = "\(line)\n".data(using: .utf8) else { return }
+        FileHandle.standardError.write(encoded)
     }
 
     private func resolveHarnessScript() throws -> URL {
@@ -793,12 +997,38 @@ struct CLIBridgeAPIClient: ClientAPI {
         )
     }
 
-    private func realmHarnessRoot() -> URL {
+    private func realmHarnessRoot(config: RealmHarnessCreateConfig?) -> URL {
+        if let override = config?.harnessRoot, !override.isEmpty {
+            return URL(fileURLWithPath: override, isDirectory: true)
+        }
         if let override = environment["SPKI_REALM_HARNESS_ROOT"], !override.isEmpty {
             return URL(fileURLWithPath: override, isDirectory: true)
         }
-        let cwd = URL(fileURLWithPath: FileManager.default.currentDirectoryPath, isDirectory: true)
-        return cwd.appendingPathComponent(".realm-harness", isDirectory: true)
+        let home = FileManager.default.homeDirectoryForCurrentUser
+        return home
+            .appendingPathComponent(".cyberspace", isDirectory: true)
+            .appendingPathComponent("testbed", isDirectory: true)
+    }
+
+    private func harnessEnvironment(config: RealmHarnessCreateConfig?) -> [String: String] {
+        guard let config else { return environment }
+        var merged = environment
+        if !config.realmName.isEmpty {
+            merged["SPKI_REALM_HARNESS_NAME"] = config.realmName
+        }
+        if !config.host.isEmpty {
+            merged["SPKI_REALM_HARNESS_HOST"] = config.host
+        }
+        if config.port > 0 {
+            merged["SPKI_REALM_HARNESS_PORT"] = String(config.port)
+        }
+        if let harnessRoot = config.harnessRoot, !harnessRoot.isEmpty {
+            merged["SPKI_REALM_HARNESS_ROOT"] = harnessRoot
+        }
+        if let nodeNamesCSV = config.nodeNamesCSV, !nodeNamesCSV.isEmpty {
+            merged["SPKI_REALM_HARNESS_NODE_NAMES"] = nodeNamesCSV
+        }
+        return merged
     }
 
     private func parseNodeEnv(fileURL: URL) throws -> [String: String] {
@@ -940,13 +1170,5 @@ struct CLIBridgeAPIClient: ClientAPI {
     private func localSystemStatus() -> SystemStatus {
         let uptimeSeconds = Int(ProcessInfo.processInfo.systemUptime)
         return SystemStatus(status: "ok", uptime: formatUptime(seconds: uptimeSeconds))
-    }
-
-    private func unavailable(_ method: String, details: [String: String]?) -> APIErrorPayload {
-        APIErrorPayload(
-            code: "unavailable",
-            message: "Method not implemented in CLI bridge",
-            details: details?.merging(["method": method]) { current, _ in current } ?? ["method": method]
-        )
     }
 }

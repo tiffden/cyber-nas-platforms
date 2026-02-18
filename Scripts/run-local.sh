@@ -89,15 +89,36 @@ if ! command -v swift >/dev/null 2>&1; then
   exit 1
 fi
 
+SWIFT_BUILD_DIR="${SPKI_SWIFT_BUILD_DIR:-$UI_ROOT/.build}"
+UI_BINARY="$SWIFT_BUILD_DIR/debug/CyberspaceMac"
+
 echo "Launching Cyberspace UI..."
 cd "$UI_ROOT" || {
   echo "Error: failed to change directory to $UI_ROOT"
   exit 1
 }
-if swift run CyberspaceMac; then
+
+if [[ "${SPKI_SKIP_UI_BUILD:-0}" = "1" ]]; then
+  echo "Skipping SwiftUI build (SPKI_SKIP_UI_BUILD=1)"
+else
+  echo "Building SwiftUI app binary..."
+  if ! swift build -c debug --product CyberspaceMac; then
+    status=$?
+    echo "Error: failed to build Cyberspace UI (swift exited with status $status)."
+    exit "$status"
+  fi
+fi
+
+if [[ ! -x "$UI_BINARY" ]]; then
+  echo "Error: UI binary not found at $UI_BINARY"
+  echo "Run from $UI_ROOT and execute: swift build -c debug --product CyberspaceMac"
+  exit 1
+fi
+
+if "$UI_BINARY"; then
   :
 else
   status=$?
-  echo "Error: failed to launch Cyberspace UI (swift exited with status $status)."
+  echo "Error: failed to launch Cyberspace UI binary (exit status $status)."
   exit "$status"
 fi

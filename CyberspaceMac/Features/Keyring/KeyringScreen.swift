@@ -33,21 +33,7 @@ struct KeyringScreen: View {
             }
 
             if appState.keys.isEmpty {
-                if #available(macOS 14.0, *) {
-                    ContentUnavailableView("No keys", systemImage: "key.horizontal")
-                } else {
-                    VStack(spacing: 8) {
-                        Image(systemName: "key.horizontal")
-                            .font(.system(size: 24))
-                            .foregroundStyle(.secondary)
-                        Text("No keys")
-                            .font(.headline)
-                        Text("Import or generate a key to populate your keyring.")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                    }
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
-                }
+                ContentUnavailableView("No keys", systemImage: "key.horizontal")
             } else {
                 List(appState.keys) { key in
                     VStack(alignment: .leading, spacing: 4) {

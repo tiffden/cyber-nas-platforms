@@ -195,13 +195,18 @@ struct InProcessAPIClient: ClientAPI {
         return RealmJoinResponse(joined: true, message: "joined \(request.name) via \(request.host):\(request.port)")
     }
 
-    func createRealmTestEnvironment(nodeCount: Int) async throws -> RealmHarnessInitResponse {
+    func createRealmTestEnvironment(
+        nodeCount: Int,
+        config _: RealmHarnessCreateConfig?,
+        requestID _: String?
+    ) async throws -> RealmHarnessInitResponse {
         guard nodeCount > 0 else {
             throw APIErrorPayload(code: "invalid_argument", message: "nodeCount must be > 0", details: nil)
         }
         let nodes = (1...nodeCount).map { id in
             RealmHarnessNodeMetadata(
                 id: id,
+                nodeName: "node\(id)",
                 envFile: "/tmp/mock/node\(id)/node.env",
                 workdir: "/tmp/mock/node\(id)/work",
                 keydir: "/tmp/mock/node\(id)/keys",
@@ -214,7 +219,11 @@ struct InProcessAPIClient: ClientAPI {
         return RealmHarnessInitResponse(nodeCount: nodeCount, nodes: nodes)
     }
 
-    func launchRealmHarnessUIs(nodeCount: Int) async throws -> RealmHarnessLaunchResponse {
+    func launchRealmHarnessUIs(
+        nodeCount: Int,
+        config _: RealmHarnessCreateConfig?,
+        requestID _: String?
+    ) async throws -> RealmHarnessLaunchResponse {
         guard nodeCount > 0 else {
             throw APIErrorPayload(code: "invalid_argument", message: "nodeCount must be > 0", details: nil)
         }
@@ -224,7 +233,39 @@ struct InProcessAPIClient: ClientAPI {
         )
     }
 
-    func stopRealmHarnessUIs(nodeCount: Int) async throws -> RealmHarnessLaunchResponse {
+    func selfJoinRealmHarness(
+        nodeCount: Int,
+        config _: RealmHarnessCreateConfig?,
+        requestID _: String?
+    ) async throws -> RealmHarnessLaunchResponse {
+        guard nodeCount > 0 else {
+            throw APIErrorPayload(code: "invalid_argument", message: "nodeCount must be > 0", details: nil)
+        }
+        return RealmHarnessLaunchResponse(
+            nodeCount: nodeCount,
+            output: "Mock self-join: node1 joined local realm."
+        )
+    }
+
+    func inviteOtherRealmHarnessNodes(
+        nodeCount: Int,
+        config _: RealmHarnessCreateConfig?,
+        requestID _: String?
+    ) async throws -> RealmHarnessLaunchResponse {
+        guard nodeCount > 1 else {
+            throw APIErrorPayload(code: "invalid_argument", message: "nodeCount must be > 1", details: nil)
+        }
+        return RealmHarnessLaunchResponse(
+            nodeCount: nodeCount,
+            output: "Mock invite: nodes 2...\(nodeCount) joined local realm."
+        )
+    }
+
+    func stopRealmHarnessUIs(
+        nodeCount: Int,
+        config _: RealmHarnessCreateConfig?,
+        requestID _: String?
+    ) async throws -> RealmHarnessLaunchResponse {
         guard nodeCount > 0 else {
             throw APIErrorPayload(code: "invalid_argument", message: "nodeCount must be > 0", details: nil)
         }
@@ -234,12 +275,21 @@ struct InProcessAPIClient: ClientAPI {
         )
     }
 
-    func realmHarnessNodes(nodeCount: Int) async throws -> [RealmHarnessNodeMetadata] {
-        let response = try await createRealmTestEnvironment(nodeCount: nodeCount)
+    func realmHarnessNodes(
+        nodeCount: Int,
+        config: RealmHarnessCreateConfig?,
+        requestID: String?
+    ) async throws -> [RealmHarnessNodeMetadata] {
+        let response = try await createRealmTestEnvironment(nodeCount: nodeCount, config: config, requestID: requestID)
         return response.nodes
     }
 
-    func realmHarnessCurrentLog(nodeID: Int, maxLines: Int) async throws -> String {
+    func realmHarnessCurrentLog(
+        nodeID: Int,
+        maxLines: Int,
+        config _: RealmHarnessCreateConfig?,
+        requestID _: String?
+    ) async throws -> String {
         guard nodeID > 0 else {
             throw APIErrorPayload(code: "invalid_argument", message: "nodeID must be > 0", details: nil)
         }

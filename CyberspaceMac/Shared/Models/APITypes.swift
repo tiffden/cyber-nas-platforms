@@ -140,8 +140,17 @@ struct RealmJoinResponse: Equatable {
     let message: String
 }
 
+struct RealmHarnessCreateConfig: Equatable {
+    let realmName: String
+    let host: String
+    let port: Int
+    let harnessRoot: String?
+    let nodeNamesCSV: String?
+}
+
 struct RealmHarnessNodeMetadata: Identifiable, Equatable {
     let id: Int
+    let nodeName: String
     let envFile: String
     let workdir: String
     let keydir: String
