@@ -14,6 +14,9 @@ final class AppState: ObservableObject {
     @Published var harnessPort: Int = 7780
     @Published var harnessRootOverride: String = ""
     @Published var harnessNodeNamesCSV: String = ""
+    /// Per-machine config set by MachineSetupScreen. When non-empty, overrides the
+    /// scalar host/port/nodeNamesCSV fields in `currentHarnessConfig`.
+    @Published var harnessMachines: [HarnessLocalMachine] = []
     @Published var harnessNodes: [RealmHarnessNodeMetadata] = []
     @Published var selectedHarnessNodeID: Int = 1
     @Published var harnessCurrentLog: String = ""
@@ -113,12 +116,28 @@ final class AppState: ObservableObject {
 
     private var currentHarnessConfig: RealmHarnessCreateConfig {
         let trimmedRoot = harnessRootOverride.trimmingCharacters(in: .whitespacesAndNewlines)
+        let realmName = harnessRealmName.trimmingCharacters(in: .whitespacesAndNewlines)
+        let root = trimmedRoot.isEmpty ? nil : trimmedRoot
+
+        // When per-machine config is set, derive host/port/names from it.
+        if !harnessMachines.isEmpty {
+            let nodeNamesCSV = harnessMachines.map(\.nodeName).joined(separator: ",")
+            return RealmHarnessCreateConfig(
+                realmName: realmName,
+                host: harnessMachines[0].host,
+                port: harnessMachines[0].port,
+                harnessRoot: root,
+                nodeNamesCSV: nodeNamesCSV.isEmpty ? nil : nodeNamesCSV
+            )
+        }
+
+        // Fallback: scalar fields (used when app is launched by harness scripts via env vars).
         let trimmedNodeNames = harnessNodeNamesCSV.trimmingCharacters(in: .whitespacesAndNewlines)
         return RealmHarnessCreateConfig(
-            realmName: harnessRealmName.trimmingCharacters(in: .whitespacesAndNewlines),
+            realmName: realmName,
             host: harnessHost.trimmingCharacters(in: .whitespacesAndNewlines),
             port: harnessPort,
-            harnessRoot: trimmedRoot.isEmpty ? nil : trimmedRoot,
+            harnessRoot: root,
             nodeNamesCSV: trimmedNodeNames.isEmpty ? nil : trimmedNodeNames
         )
     }

@@ -1,14 +1,5 @@
 # UI Design Notes (Napkin Stage)
 
-## Purpose
-
-This document is a working design scratchpad for two related but distinct products:
-
-1. Builder/Testbed UX (developer workflow) - Focusing on this first
-2. Operator UX (consumer/admin workflow) - Future
-
-The goal is to keep these surfaces intentionally separate so test orchestration does not leak into normal day-to-day operator experience.
-
 ## Practical UX Rules
 
 - UI should only collect inputs and call scripts/CLIs.
@@ -43,6 +34,10 @@ Each node has isolated:
 - vault/work directory
 - env file
 - log/pid files
+
+join identity + membership cert live in each node’s work/.vault/...
+
+standalone generated keys live in each node’s keys/ directory
 
 ## Lifecycle Surfaces to Model
 
@@ -150,6 +145,51 @@ Core controls:
 - start node UI instances
 - stop node UI instances
 - live log tail
+
+## Developer Truth Model (Chez/Chicken Runtime)
+
+Use this as the canonical behavior model for Builder UX wording.
+
+- Each machine/node runs the Cyberspace runtime (join listener + gossip behavior).
+- "Invite" is not a push-to-IP operation.
+- Join is pull-based: candidate node connects to a known member endpoint (`host:port`) and requests enrollment.
+
+### Baseline Single-Realm Sequence
+
+`Machine1` creates/bootstraps `Realm1` and establishes first membership.
+
+`Machine2` (candidate) initiates join:
+
+- generates keypair
+- sends `join-request` with `(name, hardware, pubkey)` to sponsor/master endpoint
+
+Sponsor/master evaluates join policy:
+
+- `open`: immediate accept/reject
+- `sponsored`: create proposal and sponsor-driven approval path
+- `voted`: create proposal and wait for threshold vote
+- `closed`: reject
+
+On acceptance, sponsor/master issues enrollment certificate (`join-accepted` response path).
+
+Membership/state propagation occurs via gossip after acceptance.
+
+### Pending/Expiry Semantics
+
+- "Pending invite" states exist under `sponsored` and `voted` policies (proposal queue).
+- Proposals have TTL (`*proposal-ttl*`, default 7 days) and can expire.
+- Under `open`, there is no proposal queue lifecycle for normal joins.
+
+### Certificate Timing
+
+- Certificates are involved at join acceptance time.
+- Pre-join setup may generate local keys/identity material, but enrollment cert issuance is on accepted join flow.
+
+### UX Naming Guidance
+
+- Label user action as `Request Join` (node-initiated), not `Push Invite`.
+- Show explicit policy mode (`open/sponsored/voted/closed`) in status.
+- Only show pending/expired join proposals when policy is `sponsored` or `voted`.
 
 ### Developer Log Layout (Builder)
 
