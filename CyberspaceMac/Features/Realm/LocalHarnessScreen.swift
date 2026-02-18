@@ -164,7 +164,7 @@ struct LocalHarnessScreen: View {
                     .textSelection(.enabled)
             }
 
-            GroupBox("Backend Call") {
+            GroupBox("Last Executed Backend Call") {
                 VStack(alignment: .leading, spacing: 8) {
                     Text(appState.harnessLastBackendCommand.isEmpty ? "No command run yet." : appState.harnessLastBackendCommand)
                         .font(.system(.caption, design: .monospaced))
@@ -253,13 +253,12 @@ struct LocalHarnessScreen: View {
                             .textSelection(.enabled)
                             .padding(8)
                     }
-                    .frame(minHeight: 220, maxHeight: 260)
+                    .frame(maxHeight: .infinity)
                     .background(Color.secondary.opacity(0.08))
                     .clipShape(RoundedRectangle(cornerRadius: 8))
                 }
             }
-
-            Spacer()
+            .frame(maxHeight: .infinity)
         }
         .padding()
         .onAppear {

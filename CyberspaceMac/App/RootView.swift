@@ -6,9 +6,6 @@ struct RootView: View {
 
     var body: some View {
         LocalHarnessScreen()
-        .task {
-            await appState.loadBootstrapDataIfNeeded()
-        }
         .onAppear {
             applyWindowTitle()
         }

@@ -21,10 +21,6 @@ struct CyberspaceApp: App {
             }
         }
 
-        Settings {
-            SettingsScreen()
-                .environmentObject(appState)
-        }
     }
 }
 
