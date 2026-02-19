@@ -8,6 +8,8 @@ protocol ClientAPI {
     func stopRealmHarnessUIs(nodeCount: Int, config: RealmHarnessCreateConfig?, requestID: String?) async throws -> RealmHarnessLaunchResponse
     func realmHarnessNodes(nodeCount: Int, config: RealmHarnessCreateConfig?, requestID: String?) async throws -> [RealmHarnessNodeMetadata]
     func realmHarnessCurrentLog(nodeID: Int, maxLines: Int, config: RealmHarnessCreateConfig?, requestID: String?) async throws -> String
+    func realmHarnessLog(maxLines: Int, config: RealmHarnessCreateConfig?, requestID: String?) async throws -> String
+    func cleanRealmHarness(config: RealmHarnessCreateConfig?, requestID: String?) async throws -> RealmHarnessLaunchResponse
 }
 
 extension ClientAPI {
@@ -37,5 +39,13 @@ extension ClientAPI {
 
     func realmHarnessCurrentLog(nodeID: Int, maxLines: Int) async throws -> String {
         try await realmHarnessCurrentLog(nodeID: nodeID, maxLines: maxLines, config: nil, requestID: nil)
+    }
+
+    func realmHarnessLog(maxLines: Int) async throws -> String {
+        try await realmHarnessLog(maxLines: maxLines, config: nil, requestID: nil)
+    }
+
+    func cleanRealmHarness() async throws -> RealmHarnessLaunchResponse {
+        try await cleanRealmHarness(config: nil, requestID: nil)
     }
 }

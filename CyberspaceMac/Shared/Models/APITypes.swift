@@ -19,17 +19,25 @@ struct RealmStatus: Equatable {
 
 // MARK: - Harness Types
 
+/// Lifecycle phase of the local harness testbed.
+///
+/// - notSetup: initial state or after reset; no environments exist.
+/// - running:  environments created, listeners active; ready for Demo Workflow.
+enum HarnessPhase: String {
+    case notSetup = "Not Setup"
+    case running  = "Running"
+}
+
 /// Per-machine configuration for the local harness testbed.
 ///
-/// `machineLabel` is the operator-facing name shown in the UI (e.g. "Machine 1").
-/// `nodeName` is the protocol identity created at join time (e.g. "machine1").
-/// They default to the same value but can be edited independently.
+/// `machineLabel` is both the operator-facing name and the harness directory name
+/// (e.g. "machine1" → `~/.cyberspace/testbed/machine1/`).
+/// Protocol node identity is assigned later during Demo Workflow.
 struct HarnessLocalMachine: Identifiable, Equatable {
     let id: Int              // 1-based; immutable after creation
     var host: String
     var port: Int
-    var machineLabel: String // UI/operator-facing label
-    var nodeName: String     // protocol identity at join
+    var machineLabel: String // UI label and harness directory name
 }
 
 struct RealmHarnessCreateConfig: Equatable {
@@ -46,6 +54,7 @@ struct RealmHarnessNodeMetadata: Identifiable, Equatable {
     let envFile: String
     let workdir: String
     let keydir: String
+    let logdir: String
     let host: String
     let port: Int
     let status: String

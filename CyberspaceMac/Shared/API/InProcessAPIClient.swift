@@ -18,6 +18,7 @@ struct InProcessAPIClient: ClientAPI {
                 envFile: "/tmp/mock/node\(id)/node.env",
                 workdir: "/tmp/mock/node\(id)/work",
                 keydir: "/tmp/mock/node\(id)/keys",
+                logdir: "/tmp/mock/node\(id)/logs",
                 host: "127.0.0.1",
                 port: 7779 + id,
                 status: "standalone",
@@ -83,6 +84,13 @@ struct InProcessAPIClient: ClientAPI {
         )
     }
 
+    func cleanRealmHarness(
+        config _: RealmHarnessCreateConfig?,
+        requestID _: String?
+    ) async throws -> RealmHarnessLaunchResponse {
+        return RealmHarnessLaunchResponse(nodeCount: 0, output: "Mock clean: harness root removed in in-process mode.")
+    }
+
     func realmHarnessNodes(
         nodeCount: Int,
         config: RealmHarnessCreateConfig?,
@@ -107,5 +115,13 @@ struct InProcessAPIClient: ClientAPI {
         - realm status queried
         - no live harness process in in-process mode
         """
+    }
+
+    func realmHarnessLog(
+        maxLines: Int,
+        config _: RealmHarnessCreateConfig?,
+        requestID _: String?
+    ) async throws -> String {
+        return "[mock harness log] maxLines=\(maxLines) — no harness process in in-process mode."
     }
 }

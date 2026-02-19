@@ -3,8 +3,9 @@ import AppKit
 
 /// Machine Setup — infrastructure phase.
 ///
-/// Creates isolated machine environments (directories, env files, port assignments).
-/// Node identity and realm membership are not established here; that happens in Demo Workflow.
+/// Creates machine environments and starts listeners for each virtual node.
+/// After Setup Machines completes, all nodes are configured and listening.
+/// Node identity and realm membership are established later in Demo Workflow.
 struct MachineSetupScreen: View {
     @EnvironmentObject private var appState: AppState
 
@@ -13,6 +14,18 @@ struct MachineSetupScreen: View {
     @State private var basePort: Int = 8000
     @State private var machineDrafts: [HarnessLocalMachine] = []
     @State private var didInitialize = false
+    @State private var showResetConfirmation = false
+    @State private var autoRefreshLog = false
+    @State private var autoRefreshSeconds = 2
+    @State private var useReadableLogLayout = true
+
+    private var renderedHarnessLog: String {
+        let raw = appState.harnessSetupLog
+        guard !raw.isEmpty else { return "No harness log yet." }
+        guard useReadableLogLayout else { return raw }
+        let lines = raw.split(separator: "\n", omittingEmptySubsequences: false)
+        return lines.map { formatLogLine(String($0)) }.joined(separator: "\n")
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -30,10 +43,10 @@ struct MachineSetupScreen: View {
                             syncMachineDrafts(count: newCount)
                         }
 
-                        Text("Base port")
+                        Text("Base Port")
                             .frame(width: 70, alignment: .leading)
                         Stepper(value: $basePort, in: 1...65000, step: 10) {
-                            Text("\(basePort)")
+                            Text(verbatim: "\(basePort)")
                                 .monospacedDigit()
                         }
                         .frame(width: 130)
@@ -41,28 +54,40 @@ struct MachineSetupScreen: View {
                             regeneratePorts(basePort: newBase)
                         }
 
-                        Text("Harness root")
+                        Text("Harness Root")
                             .frame(width: 90, alignment: .leading)
                         TextField("~/.cyberspace/testbed (optional override)", text: $harnessRootDraft)
                             .textFieldStyle(.roundedBorder)
                     }
 
-                    HStack {
-                        Button("Setup Machines") {
-                            Task {
-                                applyMachineDrafts()
-                                await appState.createRealmTestEnvironment(nodeCount: machineDrafts.count)
-                                await appState.refreshRealmHarnessNodes()
-                            }
-                        }
-                        .buttonStyle(.borderedProminent)
+                    // Lifecycle controls
+                    HStack(spacing: 10) {
+                        // Phase indicator
+                        Circle()
+                            .fill(phaseColor)
+                            .frame(width: 8, height: 8)
+                        Text(appState.harnessPhase.rawValue)
+                            .font(.caption.weight(.medium))
+                            .foregroundStyle(.secondary)
 
-                        Button("Refresh") {
-                            Task {
-                                applyMachineDrafts()
-                                await appState.refreshRealmHarnessNodes()
+                        Divider().frame(height: 16)
+
+                        // Setup Machines (only before first setup)
+                        if appState.harnessPhase == .notSetup {
+                            Button("Setup Machines") {
+                                Task {
+                                    applyMachineDrafts()
+                                    await appState.createRealmTestEnvironment(nodeCount: machineDrafts.count)
+                                    await appState.refreshRealmHarnessNodes()
+                                }
                             }
+                            .buttonStyle(.borderedProminent)
                         }
+
+                        // Reset (always destructive — confirmation required)
+                        Button("Reset…") { showResetConfirmation = true }
+                            .foregroundStyle(.red)
+                            .disabled(appState.harnessPhase == .notSetup)
 
                         if let err = appState.lastErrorMessage {
                             Text(err)
@@ -78,9 +103,9 @@ struct MachineSetupScreen: View {
                     HStack {
                         Text("#").frame(width: 30, alignment: .leading)
                         Text("Host").frame(width: 130, alignment: .leading)
+                        // TODO: validate port is in legal range 1–65535
                         Text("Port").frame(width: 80, alignment: .leading)
-                        Text("Label").frame(width: 130, alignment: .leading)
-                        Text("Node Name").frame(maxWidth: .infinity, alignment: .leading)
+                        Text("Machine Name").frame(maxWidth: .infinity, alignment: .leading)
                     }
                     .font(.caption.weight(.semibold))
                     .foregroundStyle(.secondary)
@@ -94,15 +119,11 @@ struct MachineSetupScreen: View {
                                 .textFieldStyle(.roundedBorder)
                                 .frame(width: 130)
                                 .font(.system(.caption, design: .monospaced))
-                            TextField("Port", value: $machine.port, format: .number)
+                            TextField("Port", value: $machine.port, format: .number.grouping(.never))
                                 .textFieldStyle(.roundedBorder)
                                 .frame(width: 80)
                                 .font(.system(.caption, design: .monospaced))
-                            TextField("Machine \(machine.id)", text: $machine.machineLabel)
-                                .textFieldStyle(.roundedBorder)
-                                .frame(width: 130)
-                                .font(.system(.caption, design: .monospaced))
-                            TextField("machine\(machine.id)", text: $machine.nodeName)
+                            TextField("machine\(machine.id)", text: $machine.machineLabel)
                                 .textFieldStyle(.roundedBorder)
                                 .font(.system(.caption, design: .monospaced))
                         }
@@ -110,7 +131,35 @@ struct MachineSetupScreen: View {
                 }
             }
 
-            Spacer()
+            // ── Harness Log (fills remaining vertical space) ──────────────
+            GroupBox("Harness Log") {
+                VStack(alignment: .leading, spacing: 10) {
+                    HStack {
+                        Button("Refresh") {
+                            Task { await appState.refreshHarnessSetupLog() }
+                        }
+                        Toggle("Auto-refresh every:", isOn: $autoRefreshLog)
+                        Stepper(value: $autoRefreshSeconds, in: 1...10) {
+                            Text("\(autoRefreshSeconds)s").monospacedDigit()
+                        }
+                        .frame(width: 90)
+                        .disabled(!autoRefreshLog)
+                        Toggle("Readable", isOn: $useReadableLogLayout)
+                    }
+
+                    ScrollView {
+                        Text(renderedHarnessLog)
+                            .font(.system(.caption, design: .monospaced))
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .textSelection(.enabled)
+                            .padding(8)
+                    }
+                    .frame(maxHeight: .infinity)
+                    .background(Color.secondary.opacity(0.08))
+                    .clipShape(RoundedRectangle(cornerRadius: 8))
+                }
+            }
+            .frame(maxHeight: .infinity)
         }
         .onAppear {
             guard !didInitialize else { return }
@@ -123,11 +172,39 @@ struct MachineSetupScreen: View {
                 machineCount = machineDrafts.count
             }
             activateWindow()
+            if appState.harnessPhase == .running {
+                Task { await appState.refreshHarnessSetupLog() }
+            }
             didInitialize = true
+        }
+        .task(id: "\(autoRefreshLog)-\(autoRefreshSeconds)") {
+            guard autoRefreshLog else { return }
+            while autoRefreshLog, !Task.isCancelled {
+                await appState.refreshHarnessSetupLog()
+                let nanos = UInt64(autoRefreshSeconds) * 1_000_000_000
+                try? await Task.sleep(nanoseconds: nanos)
+            }
+        }
+        .confirmationDialog(
+            "Reset will stop all running processes and delete the harness root. This cannot be undone.",
+            isPresented: $showResetConfirmation,
+            titleVisibility: .visible
+        ) {
+            Button("Reset", role: .destructive) {
+                Task { await appState.resetRealmHarness() }
+            }
+            Button("Cancel", role: .cancel) {}
         }
     }
 
     // MARK: - Helpers
+
+    private var phaseColor: Color {
+        switch appState.harnessPhase {
+        case .notSetup: return .secondary
+        case .running:  return .green
+        }
+    }
 
     private func syncMachineDrafts(count: Int) {
         machineDrafts = (1...count).map { i in
@@ -138,8 +215,7 @@ struct MachineSetupScreen: View {
                 id: i,
                 host: "127.0.0.1",
                 port: basePort + (i - 1),
-                machineLabel: "Machine \(i)",
-                nodeName: "machine\(i)"
+                machineLabel: "machine\(i)"
             )
         }
     }
@@ -166,5 +242,52 @@ struct MachineSetupScreen: View {
             window.orderFrontRegardless()
             window.makeKeyAndOrderFront(nil)
         }
+    }
+
+    // MARK: - Log Formatting
+
+    private func formatLogLine(_ rawLine: String) -> String {
+        guard let data = rawLine.data(using: .utf8),
+              let object = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any],
+              let component = object["component"] as? String,
+              let action = object["action"] as? String else {
+            return rawLine
+        }
+
+        let timestamp = shortTimestamp(object["ts"] as? String)
+        let level = (object["level"] as? String ?? "info").uppercased()
+        let result = object["result"] as? String ?? "ok"
+
+        var detailParts: [String] = []
+        if let nodeID = object["node_id"] as? String, !nodeID.isEmpty {
+            detailParts.append("node \(nodeID)")
+        }
+        if let duration = object["duration_ms"] as? String, !duration.isEmpty {
+            detailParts.append("\(duration)ms")
+        }
+        if let message = object["message"] as? String, !message.isEmpty {
+            detailParts.append(message)
+        }
+        if let requestID = object["request_id"] as? String,
+           !requestID.isEmpty,
+           requestID != "n/a" {
+            detailParts.append("req \(requestID.prefix(12))")
+        }
+
+        var line = "[\(timestamp)] [\(level)] \(component) \(action) -> \(result)"
+        if !detailParts.isEmpty {
+            line += " | " + detailParts.joined(separator: " | ")
+        }
+        return line
+    }
+
+    private func shortTimestamp(_ iso8601: String?) -> String {
+        guard let iso8601, !iso8601.isEmpty else { return "--:--:--" }
+        let parser = ISO8601DateFormatter()
+        guard let date = parser.date(from: iso8601) else { return iso8601 }
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.dateFormat = "HH:mm:ss"
+        return formatter.string(from: date)
     }
 }

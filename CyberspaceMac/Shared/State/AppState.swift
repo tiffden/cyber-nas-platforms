@@ -4,7 +4,7 @@ import Foundation
 @MainActor
 final class AppState: ObservableObject {
     // Bump this on each UI rollout so operators can verify they are on the latest binary.
-    static let uiVersion = "ui-2026.02.18-r06"
+    static let uiVersion = "ui-2026.02.19-r01"
 
     // MARK: - Harness State
 
@@ -17,9 +17,11 @@ final class AppState: ObservableObject {
     /// Per-machine config set by MachineSetupScreen. When non-empty, overrides the
     /// scalar host/port/nodeNamesCSV fields in `currentHarnessConfig`.
     @Published var harnessMachines: [HarnessLocalMachine] = []
+    @Published var harnessPhase: HarnessPhase = .notSetup
     @Published var harnessNodes: [RealmHarnessNodeMetadata] = []
     @Published var selectedHarnessNodeID: Int = 1
     @Published var harnessCurrentLog: String = ""
+    @Published var harnessSetupLog: String = ""
     @Published var harnessLaunchOutput: String = ""
     @Published var harnessLastBackendCommand: String = ""
     @Published var harnessLastBackendResult: String = ""
@@ -121,7 +123,9 @@ final class AppState: ObservableObject {
 
         // When per-machine config is set, derive host/port/names from it.
         if !harnessMachines.isEmpty {
-            let nodeNamesCSV = harnessMachines.map(\.nodeName).joined(separator: ",")
+            // TODO: validate that each machineLabel is a legal macOS directory name
+            // (no NUL or '/', length ≤ 255, non-empty) before passing to the harness script.
+            let nodeNamesCSV = harnessMachines.map(\.machineLabel).joined(separator: ",")
             return RealmHarnessCreateConfig(
                 realmName: realmName,
                 host: harnessMachines[0].host,
@@ -185,20 +189,18 @@ final class AppState: ObservableObject {
                 requestID: requestID
             )
             harnessNodeCount = response.nodeCount
-            harnessNodes = response.nodes
-            // Default log view to a real node immediately after init so operators see live feedback.
-            if let first = response.nodes.first {
-                selectedHarnessNodeID = first.id
-            }
-            await refreshRealmHarnessLog(nodeID: selectedHarnessNodeID, requestID: requestID)
+            harnessNodes = response.nodes   // empty — Bootstrap Realm creates node.env files
+            harnessPhase = .running
+            // No log files exist yet; Bootstrap Realm creates them when node.env is written.
             logHarnessEvent(
                 action: "harness.init",
                 result: "ok",
                 requestID: requestID,
                 fields: ["node_count": String(response.nodeCount)]
             )
-            setHarnessBackendResult("ok: initialized \(response.nodeCount) nodes")
+            setHarnessBackendResult("ok: \(response.nodeCount) machine directories created")
             lastErrorMessage = nil
+            await refreshHarnessSetupLog()
         } catch {
             logHarnessEvent(
                 action: "harness.init",
@@ -237,42 +239,6 @@ final class AppState: ObservableObject {
                 action: "harness.status",
                 result: "error",
                 requestID: resolvedRequestID,
-                fields: ["error": (error as? APIErrorPayload)?.message ?? error.localizedDescription]
-            )
-            setHarnessBackendResult("error: \((error as? APIErrorPayload)?.message ?? error.localizedDescription)")
-            lastErrorMessage = (error as? APIErrorPayload)?.message ?? error.localizedDescription
-        }
-    }
-
-    func launchRealmHarnessUIs(nodeCount: Int) async {
-        let requestID = makeRequestID(action: "harness.start_ui")
-        setHarnessBackendCall(command: harnessScriptCommand(subcommand: "ui-all-bg", nodeCount: nodeCount))
-        logHarnessEvent(
-            action: "harness.start_ui",
-            result: "start",
-            requestID: requestID,
-            fields: ["node_count": String(nodeCount)]
-        )
-        do {
-            let response = try await api.launchRealmHarnessUIs(
-                nodeCount: nodeCount,
-                config: currentHarnessConfig,
-                requestID: requestID
-            )
-            harnessLaunchOutput = response.output
-            logHarnessEvent(
-                action: "harness.start_ui",
-                result: "ok",
-                requestID: requestID,
-                fields: ["node_count": String(nodeCount)]
-            )
-            setHarnessBackendResult(response.output.isEmpty ? "ok" : response.output)
-            lastErrorMessage = nil
-        } catch {
-            logHarnessEvent(
-                action: "harness.start_ui",
-                result: "error",
-                requestID: requestID,
                 fields: ["error": (error as? APIErrorPayload)?.message ?? error.localizedDescription]
             )
             setHarnessBackendResult("error: \((error as? APIErrorPayload)?.message ?? error.localizedDescription)")
@@ -354,33 +320,31 @@ final class AppState: ObservableObject {
         }
     }
 
-    func stopRealmHarnessUIs(nodeCount: Int) async {
-        let requestID = makeRequestID(action: "harness.stop_ui")
-        setHarnessBackendCall(command: harnessScriptCommand(subcommand: "stop-all-bg", nodeCount: nodeCount))
-        logHarnessEvent(
-            action: "harness.stop_ui",
-            result: "start",
-            requestID: requestID,
-            fields: ["node_count": String(nodeCount)]
-        )
+    func resetRealmHarness() async {
+        let requestID = makeRequestID(action: "harness.reset")
+        let config = currentHarnessConfig
+        setHarnessBackendCall(command: "\(harnessEnvPrefix(config: config))realm-harness.sh stop-all-bg \(harnessNodeCount) && realm-harness.sh clean")
+        logHarnessEvent(action: "harness.reset", result: "start", requestID: requestID)
         do {
-            let response = try await api.stopRealmHarnessUIs(
-                nodeCount: nodeCount,
-                config: currentHarnessConfig,
+            // Stop first; ignore errors — processes may already be down.
+            _ = try? await api.stopRealmHarnessUIs(
+                nodeCount: harnessNodeCount,
+                config: config,
                 requestID: requestID
             )
-            harnessLaunchOutput = response.output
-            logHarnessEvent(
-                action: "harness.stop_ui",
-                result: "ok",
-                requestID: requestID,
-                fields: ["node_count": String(nodeCount)]
-            )
-            setHarnessBackendResult(response.output.isEmpty ? "ok" : response.output)
+            let response = try await api.cleanRealmHarness(config: config, requestID: requestID)
+            harnessNodes = []
+            harnessCurrentLog = ""
+            harnessSetupLog = ""
+            harnessLaunchOutput = ""
+            harnessPhase = .notSetup
+            selectedHarnessNodeID = 1
+            logHarnessEvent(action: "harness.reset", result: "ok", requestID: requestID)
+            setHarnessBackendResult(response.output.isEmpty ? "ok: harness reset" : response.output)
             lastErrorMessage = nil
         } catch {
             logHarnessEvent(
-                action: "harness.stop_ui",
+                action: "harness.reset",
                 result: "error",
                 requestID: requestID,
                 fields: ["error": (error as? APIErrorPayload)?.message ?? error.localizedDescription]
@@ -390,11 +354,25 @@ final class AppState: ObservableObject {
         }
     }
 
+    func refreshHarnessSetupLog() async {
+        do {
+            harnessSetupLog = try await api.realmHarnessLog(
+                maxLines: 200,
+                config: currentHarnessConfig,
+                requestID: nil
+            )
+            lastErrorMessage = nil
+        } catch {
+            harnessSetupLog = "Error loading harness log: \((error as? APIErrorPayload)?.message ?? error.localizedDescription)"
+        }
+    }
+
     func refreshRealmHarnessLog(nodeID: Int, requestID: String? = nil) async {
         let resolvedRequestID = requestID ?? makeRequestID(action: "harness.log_tail")
-        let root = currentHarnessConfig.harnessRoot ?? "~/.cyberspace/testbed"
+        let logRoot = harnessNodes.first(where: { $0.id == nodeID })?.logdir
+            ?? "\(currentHarnessConfig.harnessRoot ?? "~/.cyberspace/testbed")/node\(nodeID)/logs"
         setHarnessBackendCall(
-            command: "tail -n 200 \(root)/node\(nodeID)/logs/realm.log \(root)/node\(nodeID)/logs/node.log"
+            command: "tail -n 200 \(logRoot)/realm.log \(logRoot)/node.log"
         )
         do {
             harnessCurrentLog = try await api.realmHarnessCurrentLog(

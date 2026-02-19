@@ -29,7 +29,8 @@ struct CLIBridgeAPIClient: ClientAPI {
         guard nodeCount > 0 else {
             throw APIErrorPayload(code: "invalid_argument", message: "nodeCount must be > 0", details: nil)
         }
-        // Delegate setup to the shell harness so UI/API use the same node bootstrap path as CLI workflows.
+        // Delegate setup to the shell harness — creates machine directories and machine.env files.
+        // Realm/node sub-directories are created later at Bootstrap Realm time.
         let harnessScript = try resolveHarnessScript()
         let harnessEnv = harnessEnvironment(config: config)
         _ = try run(
@@ -39,8 +40,8 @@ struct CLIBridgeAPIClient: ClientAPI {
             requestID: requestID,
             action: "harness.init"
         )
-        let nodes = try await realmHarnessNodes(nodeCount: nodeCount, config: config, requestID: requestID)
-        return RealmHarnessInitResponse(nodeCount: nodeCount, nodes: nodes)
+        // No node.env files exist yet — Bootstrap Realm creates them.
+        return RealmHarnessInitResponse(nodeCount: nodeCount, nodes: [])
     }
 
     func selfJoinRealmHarness(
@@ -124,6 +125,41 @@ struct CLIBridgeAPIClient: ClientAPI {
         return RealmHarnessLaunchResponse(nodeCount: nodeCount, output: output.trimmingCharacters(in: .whitespacesAndNewlines))
     }
 
+    func realmHarnessLog(
+        maxLines: Int,
+        config: RealmHarnessCreateConfig?,
+        requestID _: String?
+    ) async throws -> String {
+        let clamped = max(10, min(5000, maxLines))
+        let harnessRoot = realmHarnessRoot(config: config)
+        let logURL = harnessRoot.appendingPathComponent("harness.log", isDirectory: false)
+        guard FileManager.default.fileExists(atPath: logURL.path) else {
+            return "No harness log yet.\nExpected: \(logURL.path)"
+        }
+        let text = try String(contentsOf: logURL, encoding: .utf8)
+        let lines = text
+            .split(separator: "\n", omittingEmptySubsequences: false)
+            .map(String.init)
+            .filter { !$0.contains("\"action\":\"harness.log_tail\"") }
+        return lines.suffix(clamped).joined(separator: "\n")
+    }
+
+    func cleanRealmHarness(
+        config: RealmHarnessCreateConfig?,
+        requestID: String?
+    ) async throws -> RealmHarnessLaunchResponse {
+        let harnessScript = try resolveHarnessScript()
+        let harnessEnv = harnessEnvironment(config: config)
+        let output = try run(
+            executable: harnessScript,
+            arguments: ["clean"],
+            environment: harnessEnv,
+            requestID: requestID,
+            action: "harness.clean"
+        )
+        return RealmHarnessLaunchResponse(nodeCount: 0, output: output.trimmingCharacters(in: .whitespacesAndNewlines))
+    }
+
     func realmHarnessNodes(
         nodeCount: Int,
         config: RealmHarnessCreateConfig?,
@@ -138,13 +174,19 @@ struct CLIBridgeAPIClient: ClientAPI {
             names: ["spki-realm", "spki_realm.exe"]
         )
         let harnessEnv = harnessEnvironment(config: config)
+        // Resolve machine directory names from the CSV (mirrors resolve_node_name in realm-harness.sh).
+        // Each entry is the machineLabel used as the top-level harness directory name.
+        let machineNames = parseMachineNames(config: config)
         var nodes: [RealmHarnessNodeMetadata] = []
         nodes.reserveCapacity(nodeCount)
 
         for id in 1...nodeCount {
+            let machineDirName = machineDirectoryName(nodeID: id, machineNames: machineNames)
             let envURL = harnessRoot
-                .appendingPathComponent("node\(id)", isDirectory: true)
+                .appendingPathComponent(machineDirName, isDirectory: true)
                 .appendingPathComponent("node.env", isDirectory: false)
+            // node.env is written at Bootstrap Realm time; skip machines not yet bootstrapped.
+            guard FileManager.default.fileExists(atPath: envURL.path) else { continue }
             let parsedEnv = try parseNodeEnv(fileURL: envURL)
 
             var mergedEnv = harnessEnv
@@ -164,6 +206,7 @@ struct CLIBridgeAPIClient: ClientAPI {
 
             let workdir = parsedEnv["SPKI_REALM_WORKDIR"] ?? ""
             let keydir = parsedEnv["SPKI_KEY_DIR"] ?? ""
+            let logdir = resolvedNodeLogDirectory(parsedEnv: parsedEnv)
             let nodeName = parsedEnv["SPKI_NODE_NAME"] ?? "node\(id)"
             let host = parsedEnv["SPKI_JOIN_HOST"] ?? "127.0.0.1"
             let port = Int(parsedEnv["SPKI_NODE_PORT"] ?? "") ?? (7779 + id)
@@ -174,6 +217,7 @@ struct CLIBridgeAPIClient: ClientAPI {
                     envFile: envURL.path,
                     workdir: workdir,
                     keydir: keydir,
+                    logdir: logdir,
                     host: host,
                     port: port,
                     status: status.status,
@@ -196,9 +240,17 @@ struct CLIBridgeAPIClient: ClientAPI {
         }
         // Bound the tail size to keep UI refresh cheap even when logs grow large.
         let clamped = max(10, min(5000, maxLines))
-        let nodeLogsRoot = realmHarnessRoot(config: config)
-            .appendingPathComponent("node\(nodeID)", isDirectory: true)
-            .appendingPathComponent("logs", isDirectory: true)
+        let harnessRoot = realmHarnessRoot(config: config)
+        let machineNames = parseMachineNames(config: config)
+        let machineDirName = machineDirectoryName(nodeID: nodeID, machineNames: machineNames)
+        let envURL = harnessRoot
+            .appendingPathComponent(machineDirName, isDirectory: true)
+            .appendingPathComponent("node.env", isDirectory: false)
+        let parsedEnv = try parseNodeEnv(fileURL: envURL)
+        let resolvedLogPath = resolvedNodeLogDirectory(parsedEnv: parsedEnv)
+        let nodeLogsRoot = resolvedLogPath.isEmpty
+            ? envURL.deletingLastPathComponent().appendingPathComponent("logs", isDirectory: true)
+            : URL(fileURLWithPath: resolvedLogPath, isDirectory: true)
         let realmLogURL = nodeLogsRoot.appendingPathComponent("realm.log", isDirectory: false)
         let nodeLogURL = nodeLogsRoot.appendingPathComponent("node.log", isDirectory: false)
 
@@ -420,10 +472,10 @@ struct CLIBridgeAPIClient: ClientAPI {
 
     private func realmHarnessRoot(config: RealmHarnessCreateConfig?) -> URL {
         if let override = config?.harnessRoot, !override.isEmpty {
-            return URL(fileURLWithPath: override, isDirectory: true)
+            return URL(fileURLWithPath: (override as NSString).expandingTildeInPath, isDirectory: true)
         }
         if let override = environment["SPKI_REALM_HARNESS_ROOT"], !override.isEmpty {
-            return URL(fileURLWithPath: override, isDirectory: true)
+            return URL(fileURLWithPath: (override as NSString).expandingTildeInPath, isDirectory: true)
         }
         let home = FileManager.default.homeDirectoryForCurrentUser
         return home
@@ -444,12 +496,42 @@ struct CLIBridgeAPIClient: ClientAPI {
             merged["SPKI_REALM_HARNESS_PORT"] = String(config.port)
         }
         if let harnessRoot = config.harnessRoot, !harnessRoot.isEmpty {
-            merged["SPKI_REALM_HARNESS_ROOT"] = harnessRoot
+            // Expand ~ here so the shell receives an absolute path.
+            // Bash does not expand tildes inside environment variable assignments.
+            merged["SPKI_REALM_HARNESS_ROOT"] = (harnessRoot as NSString).expandingTildeInPath
         }
         if let nodeNamesCSV = config.nodeNamesCSV, !nodeNamesCSV.isEmpty {
             merged["SPKI_REALM_HARNESS_NODE_NAMES"] = nodeNamesCSV
         }
         return merged
+    }
+
+    private func parseMachineNames(config: RealmHarnessCreateConfig?) -> [String] {
+        config?.nodeNamesCSV?
+            .split(separator: ",", omittingEmptySubsequences: false)
+            .map { $0.trimmingCharacters(in: .whitespaces) } ?? []
+    }
+
+    private func machineDirectoryName(nodeID: Int, machineNames: [String]) -> String {
+        let idx = nodeID - 1
+        if idx >= 0, idx < machineNames.count, !machineNames[idx].isEmpty {
+            return machineNames[idx]
+        }
+        // Fallback mirrors resolve_node_name in realm-harness.sh when CSV is unset.
+        return "node\(nodeID)"
+    }
+
+    private func resolvedNodeLogDirectory(parsedEnv: [String: String]) -> String {
+        if let explicit = parsedEnv["SPKI_NODE_LOG_DIR"], !explicit.isEmpty {
+            return explicit
+        }
+        let workdir = parsedEnv["SPKI_REALM_WORKDIR"] ?? ""
+        guard !workdir.isEmpty else { return "" }
+        let workURL = URL(fileURLWithPath: workdir, isDirectory: true)
+        return workURL
+            .deletingLastPathComponent()
+            .appendingPathComponent("logs", isDirectory: true)
+            .path
     }
 
     private func parseNodeEnv(fileURL: URL) throws -> [String: String] {
