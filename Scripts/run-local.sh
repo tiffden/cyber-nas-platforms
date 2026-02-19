@@ -54,23 +54,20 @@ resolve_spki_bin() {
   exit 1
 }
 
-STATUS_BIN_DEFAULT="$(resolve_spki_bin spki_status)"
+# OCaml-built tools: resolve from dune _build output
 SHOW_BIN_DEFAULT="$(resolve_spki_bin spki_show)"
 KEYGEN_BIN_DEFAULT="$(resolve_spki_bin spki_keygen)"
-REALM_BIN_DEFAULT="$(resolve_spki_bin spki_realm)"
-AUDIT_BIN_DEFAULT="$(resolve_spki_bin spki_audit)"
-VAULT_BIN_DEFAULT="$(resolve_spki_bin spki_vault)"
-CERTS_BIN_DEFAULT="$(resolve_spki_bin spki_certs)"
-AUTHZ_BIN_DEFAULT="$(resolve_spki_bin spki_authz)"
 
-export SPKI_STATUS_BIN="${SPKI_STATUS_BIN:-$STATUS_BIN_DEFAULT}"
 export SPKI_SHOW_BIN="${SPKI_SHOW_BIN:-$SHOW_BIN_DEFAULT}"
 export SPKI_KEYGEN_BIN="${SPKI_KEYGEN_BIN:-$KEYGEN_BIN_DEFAULT}"
-export SPKI_REALM_BIN="${SPKI_REALM_BIN:-$REALM_BIN_DEFAULT}"
-export SPKI_AUDIT_BIN="${SPKI_AUDIT_BIN:-$AUDIT_BIN_DEFAULT}"
-export SPKI_VAULT_BIN="${SPKI_VAULT_BIN:-$VAULT_BIN_DEFAULT}"
-export SPKI_CERTS_BIN="${SPKI_CERTS_BIN:-$CERTS_BIN_DEFAULT}"
-export SPKI_AUTHZ_BIN="${SPKI_AUTHZ_BIN:-$AUTHZ_BIN_DEFAULT}"
+
+# Chez-backed tools: point directly to the .sps scripts (have shebangs, no dune target)
+export SPKI_STATUS_BIN="${SPKI_STATUS_BIN:-$SPKI_ROOT/scheme/chez/spki-status.sps}"
+export SPKI_REALM_BIN="${SPKI_REALM_BIN:-$SPKI_ROOT/scheme/chez/spki-realm}"
+export SPKI_AUDIT_BIN="${SPKI_AUDIT_BIN:-$SPKI_ROOT/scheme/chez/spki-audit.sps}"
+export SPKI_VAULT_BIN="${SPKI_VAULT_BIN:-$SPKI_ROOT/scheme/chez/spki-vault.sps}"
+export SPKI_CERTS_BIN="${SPKI_CERTS_BIN:-$SPKI_ROOT/scheme/chez/spki-certs.sps}"
+export SPKI_AUTHZ_BIN="${SPKI_AUTHZ_BIN:-$SPKI_ROOT/scheme/chez/spki-authz.sps}"
 export SPKI_KEY_DIR="${SPKI_KEY_DIR:-$HOME/.spki/keys}"
 export SPKI_CHEZ_SCRIPT="${SPKI_CHEZ_SCRIPT:-$SPKI_ROOT/scheme/chez/spki-realm.sps}"
 export SPKI_CHEZ_STATUS_SCRIPT="${SPKI_CHEZ_STATUS_SCRIPT:-$SPKI_ROOT/scheme/chez/spki-status.sps}"

@@ -267,17 +267,14 @@ run_realm_for_node() {
   load_node_env "$id"
   local realm_bin
   local node_log
-  realm_bin="$(resolve_spki_bin spki_realm)"
+  # Use the spki-realm wrapper (not the .sps directly) so --libdirs and cwd are
+  # set correctly whether called from here or from CLIBridgeAPIClient via Process.
+  realm_bin="${SPKI_REALM_BIN:-$SPKI_ROOT/scheme/chez/spki-realm}"
   node_log="${SPKI_NODE_LOG_DIR:-$(node_runtime_dir "$id")/logs}/realm.log"
   mkdir -p "$(dirname "$node_log")"
   (
-    cd "$SPKI_ROOT"
-    SPKI_REALM_WORKDIR="$SPKI_REALM_WORKDIR" \
-    SPKI_KEY_DIR="$SPKI_KEY_DIR" \
-    SPKI_CHEZ_LIBDIR="$SPKI_CHEZ_LIBDIR" \
-    SPKI_CHEZ_SCRIPT="$SPKI_CHEZ_SCRIPT" \
-    SPKI_REALM_BIN="$realm_bin" \
-    SPKI_REQUEST_ID="${SPKI_REQUEST_ID:-}" \
+    # All env vars (SPKI_REALM_WORKDIR, SPKI_KEY_DIR, SPKI_CHEZ_LIBDIR, etc.)
+    # are inherited from load_node_env above. The wrapper handles chez --libdirs and cwd.
     "$realm_bin" "$@" \
       > >(tee -a "$node_log") \
       2> >(tee -a "$node_log" >&2)
