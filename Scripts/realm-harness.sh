@@ -50,8 +50,7 @@ Commands:
   init [N]           Create N isolated node workdirs (default: ${DEFAULT_NODES})
   status [N]         Show realm status for each node
   self-join [N]      Join node1 to the configured realm endpoint
-  invite-all [N]     Join nodes 2..N to node1 (${DEFAULT_MASTER_HOST}:${DEFAULT_MASTER_PORT})
-  join-all [N]       Alias for invite-all
+  join-all [N]       Join nodes 2..N to node1 (${DEFAULT_MASTER_HOST}:${DEFAULT_MASTER_PORT})
   ui <NODE_ID>       Launch one SwiftUI instance using NODE_ID environment
   ui-all-bg [N]      Launch N SwiftUI instances in background with isolated env
   stop-all-bg [N]    Stop background SwiftUI instances started by ui-all-bg
@@ -343,13 +342,13 @@ cmd_self_join() {
   log_event "info" "harness.self_join" "ok" "node=1"
 }
 
-cmd_invite_all() {
+cmd_join_all() {
   local count="${1:-$DEFAULT_NODES}"
   if (( count < 2 )); then
-    echo "Need at least 2 nodes for invite-all" >&2
+    echo "Need at least 2 nodes for join-all" >&2
     exit 1
   fi
-  log_event "info" "harness.invite_all" "start" "nodes=${count}"
+  log_event "info" "harness.join_all" "start" "nodes=${count}"
   # Resolve machine names from the incoming CSV before any machine_dir/load_machine_env calls.
   SPKI_DEFAULT_NODE_NAMES="${SPKI_REALM_HARNESS_NODE_NAMES:-${SPKI_DEFAULT_NODE_NAMES:-}}"
   ensure_build
@@ -360,7 +359,7 @@ cmd_invite_all() {
     echo "Joining machine ${id} (${SPKI_MACHINE_NAME}) -> ${DEFAULT_MASTER_HOST}:${DEFAULT_MASTER_PORT}"
     run_realm_for_node "$id" --json --join --name "$SPKI_NODE_NAME" --host "$DEFAULT_MASTER_HOST" --port "$DEFAULT_MASTER_PORT"
   done
-  log_event "info" "harness.invite_all" "ok" "nodes=${count}"
+  log_event "info" "harness.join_all" "ok" "nodes=${count}"
 }
 
 cmd_ui() {
@@ -478,8 +477,7 @@ main() {
     init) cmd_init "$@" ;;
     status) cmd_status "$@" ;;
     self-join) cmd_self_join "$@" ;;
-    invite-all) cmd_invite_all "$@" ;;
-    join-all) cmd_invite_all "$@" ;;
+    join-all) cmd_join_all "$@" ;;
     ui) cmd_ui "$@" ;;
     ui-all-bg) cmd_ui_all_bg "$@" ;;
     stop-all-bg) cmd_stop_all_bg "$@" ;;

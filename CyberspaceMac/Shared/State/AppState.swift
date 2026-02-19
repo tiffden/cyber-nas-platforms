@@ -4,7 +4,7 @@ import Foundation
 @MainActor
 final class AppState: ObservableObject {
     // Bump this on each UI rollout so operators can verify they are on the latest binary.
-    static let uiVersion = "ui-2026.02.19-r02"
+    static let uiVersion = "ui-2026.02.19-r03"
 
     // MARK: - Harness State
 
@@ -314,10 +314,10 @@ final class AppState: ObservableObject {
     }
 
     func inviteOtherRealmHarnessNodes(nodeCount: Int) async {
-        let requestID = makeRequestID(action: "harness.invite")
-        setHarnessBackendCall(command: harnessScriptCommand(subcommand: "invite-all", nodeCount: nodeCount))
+        let requestID = makeRequestID(action: "harness.join_all")
+        setHarnessBackendCall(command: harnessScriptCommand(subcommand: "join-all", nodeCount: nodeCount))
         logHarnessEvent(
-            action: "harness.invite",
+            action: "harness.join_all",
             result: "start",
             requestID: requestID,
             fields: ["node_count": String(nodeCount)]
@@ -331,7 +331,7 @@ final class AppState: ObservableObject {
             harnessLaunchOutput = response.output
             await refreshRealmHarnessNodes(requestID: requestID)
             logHarnessEvent(
-                action: "harness.invite",
+                action: "harness.join_all",
                 result: "ok",
                 requestID: requestID,
                 fields: ["node_count": String(nodeCount)]
@@ -340,7 +340,7 @@ final class AppState: ObservableObject {
             lastErrorMessage = nil
         } catch {
             logHarnessEvent(
-                action: "harness.invite",
+                action: "harness.join_all",
                 result: "error",
                 requestID: requestID,
                 fields: ["error": formatError(error)]

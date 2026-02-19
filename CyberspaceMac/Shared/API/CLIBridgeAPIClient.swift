@@ -76,10 +76,10 @@ struct CLIBridgeAPIClient: ClientAPI {
         let harnessEnv = harnessEnvironment(config: config)
         let output = try run(
             executable: harnessScript,
-            arguments: ["invite-all", String(nodeCount)],
+            arguments: ["join-all", String(nodeCount)],
             environment: harnessEnv,
             requestID: requestID,
-            action: "harness.invite_all"
+            action: "harness.join_all"
         )
         return RealmHarnessLaunchResponse(nodeCount: nodeCount, output: output.trimmingCharacters(in: .whitespacesAndNewlines))
     }
