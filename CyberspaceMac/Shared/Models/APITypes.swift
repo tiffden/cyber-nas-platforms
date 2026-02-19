@@ -46,6 +46,25 @@ struct RealmHarnessCreateConfig: Equatable {
     let port: Int
     let harnessRoot: String?
     let nodeNamesCSV: String?
+    /// Overrides the name assigned to the bootstrap node (node 1) during self-join.
+    /// When nil the default from SPKI_DEFAULT_NODE_NAMES is used.
+    let bootstrapNodeName: String?
+
+    init(
+        realmName: String,
+        host: String,
+        port: Int,
+        harnessRoot: String? = nil,
+        nodeNamesCSV: String? = nil,
+        bootstrapNodeName: String? = nil
+    ) {
+        self.realmName = realmName
+        self.host = host
+        self.port = port
+        self.harnessRoot = harnessRoot
+        self.nodeNamesCSV = nodeNamesCSV
+        self.bootstrapNodeName = bootstrapNodeName
+    }
 }
 
 struct RealmHarnessNodeMetadata: Identifiable, Equatable {

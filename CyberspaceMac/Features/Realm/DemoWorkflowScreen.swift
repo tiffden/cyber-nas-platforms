@@ -9,6 +9,7 @@ struct DemoWorkflowScreen: View {
     @EnvironmentObject private var appState: AppState
 
     @State private var realmNameDraft = ""
+    @State private var nodeNameDraft = ""
     @State private var autoRefreshLog = false
     @State private var autoRefreshSeconds = 2
     @State private var useReadableLogLayout = true
@@ -64,6 +65,17 @@ struct DemoWorkflowScreen: View {
                     }
 
                     HStack {
+                        Text("Node name")
+                            .frame(width: 130, alignment: .leading)
+                        TextField("node1", text: $nodeNameDraft)
+                            .textFieldStyle(.roundedBorder)
+                            .frame(maxWidth: 220)
+                        Text("(bootstrap node identity)")
+                            .font(.caption2)
+                            .foregroundStyle(.tertiary)
+                    }
+
+                    HStack {
                         Text("Bootstrap machine")
                             .frame(width: 130, alignment: .leading)
                         Text(bootstrapMachineLabel)
@@ -86,7 +98,12 @@ struct DemoWorkflowScreen: View {
                         Button("Bootstrap Realm (Self-Join)") {
                             Task {
                                 appState.harnessRealmName = realmNameDraft
-                                await appState.selfJoinRealmHarness(nodeCount: appState.harnessNodeCount)
+                                await appState.selfJoinRealmHarness(
+                                    nodeNameOverride: nodeNameDraft
+                                )
+                                // Stop here if self-join failed — preserve the error message and
+                                // avoid masking it with a spurious "Node environment file not found".
+                                guard appState.lastErrorMessage == nil else { return }
                                 await appState.refreshRealmHarnessNodes()
                                 await appState.refreshRealmHarnessLog(nodeID: appState.selectedHarnessNodeID)
                             }
@@ -198,8 +215,8 @@ struct DemoWorkflowScreen: View {
                 }
             }
 
-            // ── 6. Current Log (fills remaining vertical space) ───────────
-            GroupBox("Current Log") {
+            // ── 6. Node Log (fills remaining vertical space) ──────────────
+            GroupBox("Node Log") {
                 VStack(alignment: .leading, spacing: 10) {
                     HStack {
                         if appState.harnessNodes.isEmpty {
@@ -207,16 +224,17 @@ struct DemoWorkflowScreen: View {
                                 .font(.caption)
                                 .foregroundStyle(.secondary)
                         } else {
-                            Text("Node:")
+                            Text("View:")
                                 .font(.caption)
                                 .foregroundStyle(.secondary)
-                            Picker("Node", selection: $appState.selectedHarnessNodeID) {
+                            Picker("Log view", selection: $appState.selectedHarnessNodeID) {
+                                Text("Realm (All)").tag(0)
                                 ForEach(appState.harnessNodes) { node in
                                     Text("Node \(node.id) (\(node.nodeName))").tag(node.id)
                                 }
                             }
                             .pickerStyle(.menu)
-                            .frame(width: 140)
+                            .frame(width: 160)
                         }
                         Button("Refresh Log") {
                             Task { await appState.refreshRealmHarnessLog(nodeID: appState.selectedHarnessNodeID) }
@@ -247,6 +265,7 @@ struct DemoWorkflowScreen: View {
         .onAppear {
             guard !didInitialize else { return }
             realmNameDraft = appState.harnessRealmName
+            nodeNameDraft = appState.harnessMachines.first?.machineLabel ?? ""
             didInitialize = true
         }
         .onChange(of: appState.selectedHarnessNodeID) { _, newID in
@@ -313,39 +332,61 @@ struct DemoWorkflowScreen: View {
         }
 
         let timestamp = shortTimestamp(object["ts"] as? String)
-        let level = (object["level"] as? String ?? "info").uppercased()
+        let rawLevel = object["level"] as? String ?? "info"
+        let consoleType = consoleLogType(rawLevel)
         let result = object["result"] as? String ?? "ok"
+        let subsystem = "\(component):\(action)"
 
-        var detailParts: [String] = []
+        var messageParts: [String] = [result]
         if let nodeID = object["node_id"] as? String, !nodeID.isEmpty {
-            detailParts.append("node \(nodeID)")
+            messageParts.append("node \(nodeID)")
         }
         if let duration = object["duration_ms"] as? String, !duration.isEmpty {
-            detailParts.append("\(duration)ms")
+            messageParts.append("\(duration)ms")
         }
         if let message = object["message"] as? String, !message.isEmpty {
-            detailParts.append(message)
+            messageParts.append(message)
         }
         if let requestID = object["request_id"] as? String,
            !requestID.isEmpty,
            requestID != "n/a" {
-            detailParts.append("req \(requestID.prefix(12))")
+            messageParts.append("req \(requestID.prefix(12))")
         }
 
-        var line = "[\(timestamp)] [\(level)] \(component) \(action) -> \(result)"
-        if !detailParts.isEmpty {
-            line += " | " + detailParts.joined(separator: " | ")
-        }
-        return line
+        let typeCol = consoleType.padding(toLength: 10, withPad: " ", startingAt: 0)
+        let subsystemCol = subsystem.padding(toLength: 34, withPad: " ", startingAt: 0)
+        return "\(timestamp)  \(typeCol)  \(subsystemCol)  \(messageParts.joined(separator: " | "))"
     }
 
-    private func shortTimestamp(_ iso8601: String?) -> String {
-        guard let iso8601, !iso8601.isEmpty else { return "--:--:--" }
+    private func consoleLogType(_ level: String) -> String {
+        switch level.lowercased() {
+        case "error", "fault": return "Error"
+        case "debug":          return "Debug"
+        default:               return "Default"
+        }
+    }
+
+    private func shortTimestamp(_ raw: String?) -> String {
+        guard let raw, !raw.isEmpty else { return "--:--:--.---" }
+        // Unix epoch seconds emitted by spki-realm.sps (all-digit, > 1 billion).
+        if let secs = TimeInterval(raw), secs > 1_000_000_000 {
+            let date = Date(timeIntervalSince1970: secs)
+            let f = DateFormatter()
+            f.locale = Locale(identifier: "en_US_POSIX")
+            f.dateFormat = "HH:mm:ss.SSS"
+            return f.string(from: date)
+        }
+        // ISO 8601 (with or without fractional seconds) from other log sources.
         let parser = ISO8601DateFormatter()
-        guard let date = parser.date(from: iso8601) else { return iso8601 }
-        let formatter = DateFormatter()
-        formatter.locale = Locale(identifier: "en_US_POSIX")
-        formatter.dateFormat = "HH:mm:ss"
-        return formatter.string(from: date)
+        parser.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        let date = parser.date(from: raw) ?? {
+            let fallback = ISO8601DateFormatter()
+            return fallback.date(from: raw)
+        }()
+        guard let date else { return raw }
+        let f = DateFormatter()
+        f.locale = Locale(identifier: "en_US_POSIX")
+        f.dateFormat = "HH:mm:ss.SSS"
+        return f.string(from: date)
     }
 }

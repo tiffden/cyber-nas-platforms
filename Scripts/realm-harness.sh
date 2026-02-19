@@ -171,7 +171,12 @@ write_node_env() {
   local keydir="$runtime_root/keys"
   local logdir="$runtime_root/logs"
   local node_name
-  node_name="$(resolve_node_name "$id")"
+  # SPKI_BOOTSTRAP_NODE_NAME overrides the default name for node 1 only (set by UI self-join).
+  if [[ "$id" == "1" ]] && [[ -n "${SPKI_BOOTSTRAP_NODE_NAME:-}" ]]; then
+    node_name="$SPKI_BOOTSTRAP_NODE_NAME"
+  else
+    node_name="$(resolve_node_name "$id")"
+  fi
   local port=$((DEFAULT_MASTER_PORT + id - 1))
 
   # Wipe workdir and keydir so re-init always starts with a clean identity
@@ -253,10 +258,8 @@ ensure_build() {
     echo "Error: dune not found. Install with: opam install dune" >&2
     exit 1
   fi
-  log_event "info" "harness.build" "start" "building SPKI binaries"
   echo "Building SPKI binaries..."
   (cd "$SPKI_ROOT" && dune build)
-  log_event "info" "harness.build" "ok" "build complete"
 }
 
 run_realm_for_node() {
@@ -268,7 +271,6 @@ run_realm_for_node() {
   realm_bin="$(resolve_spki_bin spki_realm)"
   node_log="${SPKI_NODE_LOG_DIR:-$(node_runtime_dir "$id")/logs}/realm.log"
   mkdir -p "$(dirname "$node_log")"
-  log_event "info" "harness.realm_command" "start" "node=${id} args=$*"
   (
     cd "$SPKI_ROOT"
     SPKI_REALM_WORKDIR="$SPKI_REALM_WORKDIR" \
@@ -281,7 +283,6 @@ run_realm_for_node() {
       > >(tee -a "$node_log") \
       2> >(tee -a "$node_log" >&2)
   )
-  log_event "info" "harness.realm_command" "ok" "node=${id}"
 }
 
 cmd_init() {
@@ -324,12 +325,10 @@ cmd_status() {
 }
 
 cmd_self_join() {
-  local count="${1:-$DEFAULT_NODES}"
-  if (( count < 1 )); then
-    echo "Need at least 1 node for self-join" >&2
-    exit 1
-  fi
-  log_event "info" "harness.self_join" "start" "nodes=${count}"
+  log_event "info" "harness.self_join" "start" "node=1"
+  # Resolve machine names from the incoming CSV (mirrors cmd_init).
+  # Must be set before machine_dir/load_machine_env calls that use resolve_node_name.
+  SPKI_DEFAULT_NODE_NAMES="${SPKI_REALM_HARNESS_NODE_NAMES:-${SPKI_DEFAULT_NODE_NAMES:-}}"
   ensure_build
   # Source machine.env so realm/node dirs are created with the correct machine config.
   # write_node_env creates <machine>/<realm>/<node>/ and writes node.env.
@@ -351,6 +350,8 @@ cmd_invite_all() {
     exit 1
   fi
   log_event "info" "harness.invite_all" "start" "nodes=${count}"
+  # Resolve machine names from the incoming CSV before any machine_dir/load_machine_env calls.
+  SPKI_DEFAULT_NODE_NAMES="${SPKI_REALM_HARNESS_NODE_NAMES:-${SPKI_DEFAULT_NODE_NAMES:-}}"
   ensure_build
   for id in $(seq 2 "$count"); do
     load_machine_env "$id"

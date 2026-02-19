@@ -124,4 +124,13 @@ struct InProcessAPIClient: ClientAPI {
     ) async throws -> String {
         return "[mock harness log] maxLines=\(maxLines) — no harness process in in-process mode."
     }
+
+    func realmHarnessAllNodesLog(
+        nodes: [RealmHarnessNodeMetadata],
+        maxLines: Int,
+        config _: RealmHarnessCreateConfig?,
+        requestID _: String?
+    ) async throws -> String {
+        return "[mock realm log] \(nodes.count) nodes, maxLines=\(maxLines) — no harness process in in-process mode."
+    }
 }

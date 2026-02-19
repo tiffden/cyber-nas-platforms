@@ -9,6 +9,7 @@ protocol ClientAPI {
     func realmHarnessNodes(nodeCount: Int, config: RealmHarnessCreateConfig?, requestID: String?) async throws -> [RealmHarnessNodeMetadata]
     func realmHarnessCurrentLog(nodeID: Int, maxLines: Int, config: RealmHarnessCreateConfig?, requestID: String?) async throws -> String
     func realmHarnessLog(maxLines: Int, config: RealmHarnessCreateConfig?, requestID: String?) async throws -> String
+    func realmHarnessAllNodesLog(nodes: [RealmHarnessNodeMetadata], maxLines: Int, config: RealmHarnessCreateConfig?, requestID: String?) async throws -> String
     func cleanRealmHarness(config: RealmHarnessCreateConfig?, requestID: String?) async throws -> RealmHarnessLaunchResponse
 }
 
@@ -43,6 +44,10 @@ extension ClientAPI {
 
     func realmHarnessLog(maxLines: Int) async throws -> String {
         try await realmHarnessLog(maxLines: maxLines, config: nil, requestID: nil)
+    }
+
+    func realmHarnessAllNodesLog(nodes: [RealmHarnessNodeMetadata], maxLines: Int) async throws -> String {
+        try await realmHarnessAllNodesLog(nodes: nodes, maxLines: maxLines, config: nil, requestID: nil)
     }
 
     func cleanRealmHarness() async throws -> RealmHarnessLaunchResponse {

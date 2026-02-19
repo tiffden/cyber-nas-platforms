@@ -4,7 +4,7 @@ import Foundation
 @MainActor
 final class AppState: ObservableObject {
     // Bump this on each UI rollout so operators can verify they are on the latest binary.
-    static let uiVersion = "ui-2026.02.19-r01"
+    static let uiVersion = "ui-2026.02.19-r02"
 
     // MARK: - Harness State
 
@@ -111,6 +111,21 @@ final class AppState: ObservableObject {
         harnessLastBackendResult = result
     }
 
+    /// Format an error for display, appending stderr when the underlying CLI command failed.
+    private func formatError(_ error: Error) -> String {
+        guard let payload = error as? APIErrorPayload else {
+            return error.localizedDescription
+        }
+        var parts = [payload.message]
+        if let status = payload.details?["status"], !status.isEmpty {
+            parts.append("exit \(status)")
+        }
+        if let stderr = payload.details?["stderr"], !stderr.isEmpty {
+            parts.append("stderr:\n\(stderr)")
+        }
+        return parts.joined(separator: "\n")
+    }
+
     private func harnessScriptCommand(subcommand: String, nodeCount: Int) -> String {
         let config = currentHarnessConfig
         return "\(harnessEnvPrefix(config: config))spki/macos/swiftui/Scripts/realm-harness.sh \(subcommand) \(nodeCount)"
@@ -206,10 +221,10 @@ final class AppState: ObservableObject {
                 action: "harness.init",
                 result: "error",
                 requestID: requestID,
-                fields: ["error": (error as? APIErrorPayload)?.message ?? error.localizedDescription]
+                fields: ["error": formatError(error)]
             )
-            setHarnessBackendResult("error: \((error as? APIErrorPayload)?.message ?? error.localizedDescription)")
-            lastErrorMessage = (error as? APIErrorPayload)?.message ?? error.localizedDescription
+            setHarnessBackendResult("error:\n\(formatError(error))")
+            lastErrorMessage = formatError(error)
         }
     }
 
@@ -239,26 +254,41 @@ final class AppState: ObservableObject {
                 action: "harness.status",
                 result: "error",
                 requestID: resolvedRequestID,
-                fields: ["error": (error as? APIErrorPayload)?.message ?? error.localizedDescription]
+                fields: ["error": formatError(error)]
             )
-            setHarnessBackendResult("error: \((error as? APIErrorPayload)?.message ?? error.localizedDescription)")
-            lastErrorMessage = (error as? APIErrorPayload)?.message ?? error.localizedDescription
+            setHarnessBackendResult("error:\n\(formatError(error))")
+            lastErrorMessage = formatError(error)
         }
     }
 
-    func selfJoinRealmHarness(nodeCount: Int) async {
+    func selfJoinRealmHarness(nodeNameOverride: String? = nil) async {
         let requestID = makeRequestID(action: "harness.self_join")
-        setHarnessBackendCall(command: harnessScriptCommand(subcommand: "self-join", nodeCount: nodeCount))
+        // self-join always bootstraps node 1 only — nodeCount is not meaningful here.
+        setHarnessBackendCall(command: harnessScriptCommand(subcommand: "self-join", nodeCount: 1))
         logHarnessEvent(
             action: "harness.self_join",
             result: "start",
             requestID: requestID,
-            fields: ["node_count": String(nodeCount)]
+            fields: [:]
         )
         do {
+            let base = currentHarnessConfig
+            let config: RealmHarnessCreateConfig
+            if let name = nodeNameOverride, !name.isEmpty {
+                config = RealmHarnessCreateConfig(
+                    realmName: base.realmName,
+                    host: base.host,
+                    port: base.port,
+                    harnessRoot: base.harnessRoot,
+                    nodeNamesCSV: base.nodeNamesCSV,
+                    bootstrapNodeName: name
+                )
+            } else {
+                config = base
+            }
             let response = try await api.selfJoinRealmHarness(
-                nodeCount: nodeCount,
-                config: currentHarnessConfig,
+                nodeCount: 1,
+                config: config,
                 requestID: requestID
             )
             harnessLaunchOutput = response.output
@@ -267,7 +297,7 @@ final class AppState: ObservableObject {
                 action: "harness.self_join",
                 result: "ok",
                 requestID: requestID,
-                fields: ["node_count": String(nodeCount)]
+                fields: [:]
             )
             setHarnessBackendResult(response.output.isEmpty ? "ok" : response.output)
             lastErrorMessage = nil
@@ -276,10 +306,10 @@ final class AppState: ObservableObject {
                 action: "harness.self_join",
                 result: "error",
                 requestID: requestID,
-                fields: ["error": (error as? APIErrorPayload)?.message ?? error.localizedDescription]
+                fields: ["error": formatError(error)]
             )
-            setHarnessBackendResult("error: \((error as? APIErrorPayload)?.message ?? error.localizedDescription)")
-            lastErrorMessage = (error as? APIErrorPayload)?.message ?? error.localizedDescription
+            setHarnessBackendResult("error:\n\(formatError(error))")
+            lastErrorMessage = formatError(error)
         }
     }
 
@@ -313,10 +343,10 @@ final class AppState: ObservableObject {
                 action: "harness.invite",
                 result: "error",
                 requestID: requestID,
-                fields: ["error": (error as? APIErrorPayload)?.message ?? error.localizedDescription]
+                fields: ["error": formatError(error)]
             )
-            setHarnessBackendResult("error: \((error as? APIErrorPayload)?.message ?? error.localizedDescription)")
-            lastErrorMessage = (error as? APIErrorPayload)?.message ?? error.localizedDescription
+            setHarnessBackendResult("error:\n\(formatError(error))")
+            lastErrorMessage = formatError(error)
         }
     }
 
@@ -347,10 +377,10 @@ final class AppState: ObservableObject {
                 action: "harness.reset",
                 result: "error",
                 requestID: requestID,
-                fields: ["error": (error as? APIErrorPayload)?.message ?? error.localizedDescription]
+                fields: ["error": formatError(error)]
             )
-            setHarnessBackendResult("error: \((error as? APIErrorPayload)?.message ?? error.localizedDescription)")
-            lastErrorMessage = (error as? APIErrorPayload)?.message ?? error.localizedDescription
+            setHarnessBackendResult("error:\n\(formatError(error))")
+            lastErrorMessage = formatError(error)
         }
     }
 
@@ -369,6 +399,26 @@ final class AppState: ObservableObject {
 
     func refreshRealmHarnessLog(nodeID: Int, requestID: String? = nil) async {
         let resolvedRequestID = requestID ?? makeRequestID(action: "harness.log_tail")
+
+        // nodeID == 0 is the sentinel for the interleaved "Realm (All Nodes)" view.
+        if nodeID == 0 {
+            setHarnessBackendCall(command: "realm.log (all nodes, interleaved by ts)")
+            do {
+                harnessCurrentLog = try await api.realmHarnessAllNodesLog(
+                    nodes: harnessNodes,
+                    maxLines: 500,
+                    config: currentHarnessConfig,
+                    requestID: resolvedRequestID
+                )
+                setHarnessBackendResult("ok: interleaved realm log, \(harnessNodes.count) node(s)")
+                lastErrorMessage = nil
+            } catch {
+                setHarnessBackendResult("error:\n\(formatError(error))")
+                lastErrorMessage = formatError(error)
+            }
+            return
+        }
+
         let logRoot = harnessNodes.first(where: { $0.id == nodeID })?.logdir
             ?? "\(currentHarnessConfig.harnessRoot ?? "~/.cyberspace/testbed")/node\(nodeID)/logs"
         setHarnessBackendCall(
@@ -393,8 +443,8 @@ final class AppState: ObservableObject {
                     "error": (error as? APIErrorPayload)?.message ?? error.localizedDescription
                 ]
             )
-            setHarnessBackendResult("error: \((error as? APIErrorPayload)?.message ?? error.localizedDescription)")
-            lastErrorMessage = (error as? APIErrorPayload)?.message ?? error.localizedDescription
+            setHarnessBackendResult("error:\n\(formatError(error))")
+            lastErrorMessage = formatError(error)
         }
     }
 }

@@ -144,6 +144,40 @@ struct CLIBridgeAPIClient: ClientAPI {
         return lines.suffix(clamped).joined(separator: "\n")
     }
 
+    func realmHarnessAllNodesLog(
+        nodes: [RealmHarnessNodeMetadata],
+        maxLines: Int,
+        config _: RealmHarnessCreateConfig?,
+        requestID _: String?
+    ) async throws -> String {
+        guard !nodes.isEmpty else {
+            return "No nodes bootstrapped yet. Bootstrap Realm first."
+        }
+        let clamped = max(10, min(5000, maxLines))
+
+        // Collect every line from each node's realm.log, tagging with its ISO-8601 ts.
+        var tagged: [(ts: String, line: String)] = []
+        for node in nodes {
+            let logURL = URL(fileURLWithPath: node.logdir, isDirectory: true)
+                .appendingPathComponent("realm.log", isDirectory: false)
+            guard FileManager.default.fileExists(atPath: logURL.path) else { continue }
+            let text = (try? String(contentsOf: logURL, encoding: .utf8)) ?? ""
+            for rawLine in text.split(separator: "\n", omittingEmptySubsequences: true).map(String.init) {
+                let ts = extractJSONTimestamp(from: rawLine) ?? ""
+                tagged.append((ts: ts, line: rawLine))
+            }
+        }
+
+        guard !tagged.isEmpty else {
+            return "No realm log entries yet across \(nodes.count) node(s)."
+        }
+
+        // Stable sort: lines with a ts sort chronologically; lines without ts keep
+        // relative insertion order (they sort before any timestamped line).
+        tagged.sort { $0.ts < $1.ts }
+        return tagged.suffix(clamped).map(\.line).joined(separator: "\n")
+    }
+
     func cleanRealmHarness(
         config: RealmHarnessCreateConfig?,
         requestID: String?
@@ -246,6 +280,11 @@ struct CLIBridgeAPIClient: ClientAPI {
         let envURL = harnessRoot
             .appendingPathComponent(machineDirName, isDirectory: true)
             .appendingPathComponent("node.env", isDirectory: false)
+        // node.env is written at Bootstrap Realm time; return a placeholder if it
+        // doesn't exist yet so the caller gets informative text rather than an error.
+        guard FileManager.default.fileExists(atPath: envURL.path) else {
+            return "Node \(nodeID) (\(machineDirName)) not yet bootstrapped.\nRun Bootstrap Realm to initialize."
+        }
         let parsedEnv = try parseNodeEnv(fileURL: envURL)
         let resolvedLogPath = resolvedNodeLogDirectory(parsedEnv: parsedEnv)
         let nodeLogsRoot = resolvedLogPath.isEmpty
@@ -503,6 +542,9 @@ struct CLIBridgeAPIClient: ClientAPI {
         if let nodeNamesCSV = config.nodeNamesCSV, !nodeNamesCSV.isEmpty {
             merged["SPKI_REALM_HARNESS_NODE_NAMES"] = nodeNamesCSV
         }
+        if let bootstrapNodeName = config.bootstrapNodeName, !bootstrapNodeName.isEmpty {
+            merged["SPKI_BOOTSTRAP_NODE_NAME"] = bootstrapNodeName
+        }
         return merged
     }
 
@@ -532,6 +574,13 @@ struct CLIBridgeAPIClient: ClientAPI {
             .deletingLastPathComponent()
             .appendingPathComponent("logs", isDirectory: true)
             .path
+    }
+
+    private func extractJSONTimestamp(from line: String) -> String? {
+        guard let data = line.data(using: .utf8),
+              let object = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any],
+              let ts = object["ts"] as? String else { return nil }
+        return ts
     }
 
     private func parseNodeEnv(fileURL: URL) throws -> [String: String] {
