@@ -17,10 +17,25 @@ struct DemoWorkflowScreen: View {
 
     private var renderedHarnessLog: String {
         let raw = appState.harnessCurrentLog
-        guard !raw.isEmpty else { return "No log loaded." }
-        guard useReadableLogLayout else { return raw }
-        let lines = raw.split(separator: "\n", omittingEmptySubsequences: false)
-        return lines.map { formatLogLine(String($0)) }.joined(separator: "\n")
+        let formatted: String
+        if raw.isEmpty {
+            formatted = "No log loaded."
+        } else if useReadableLogLayout {
+            let lines = raw.split(separator: "\n", omittingEmptySubsequences: false)
+            formatted = lines.map { formatLogLine(String($0)) }.joined(separator: "\n")
+        } else {
+            formatted = raw
+        }
+        let trace = appState.harnessBackendTraceBlock
+        if trace.isEmpty { return formatted }
+        return "\(trace)\n\n\(formatted)"
+    }
+
+    private var logLevelSpinnerBinding: Binding<String> {
+        Binding(
+            get: { appState.effectiveHarnessLogLevel },
+            set: { appState.setHarnessLogLevel($0) }
+        )
     }
 
     private var masterBootstrapped: Bool {
@@ -92,6 +107,21 @@ struct DemoWorkflowScreen: View {
                             .font(.caption2)
                             .foregroundStyle(.tertiary)
                             .padding(.leading, 4)
+                    }
+
+                    HStack {
+                        Text("Log level")
+                            .frame(width: 130, alignment: .leading)
+                        Picker("Log level", selection: logLevelSpinnerBinding) {
+                            ForEach(appState.harnessLogLevelOptions, id: \.self) { level in
+                                Text(level).tag(level)
+                            }
+                        }
+                        .pickerStyle(.menu)
+                        .frame(width: 120)
+                        Text("(applies to backend calls)")
+                            .font(.caption2)
+                            .foregroundStyle(.tertiary)
                     }
 
                     HStack {
@@ -195,27 +225,7 @@ struct DemoWorkflowScreen: View {
                 }
             }
 
-            // ── 5. Last Executed Backend Call ─────────────────────────────
-            GroupBox("Last Executed Backend Call") {
-                VStack(alignment: .leading, spacing: 8) {
-                    Text(appState.harnessLastBackendCommand.isEmpty
-                         ? "No command run yet."
-                         : appState.harnessLastBackendCommand)
-                        .font(.system(.caption, design: .monospaced))
-                        .textSelection(.enabled)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-
-                    if !appState.harnessLastBackendResult.isEmpty {
-                        Text(appState.harnessLastBackendResult)
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                            .textSelection(.enabled)
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                    }
-                }
-            }
-
-            // ── 6. Node Log (fills remaining vertical space) ──────────────
+            // ── 5. Node Log (fills remaining vertical space) ──────────────
             GroupBox("Node Log") {
                 VStack(alignment: .leading, spacing: 10) {
                     HStack {
@@ -328,12 +338,20 @@ struct DemoWorkflowScreen: View {
               let object = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any],
               let component = object["component"] as? String,
               let action = object["action"] as? String else {
-            return rawLine
+            let trimmed = rawLine.trimmingCharacters(in: .whitespaces)
+            guard !trimmed.isEmpty else { return rawLine }
+            if trimmed.hasPrefix("[") { return rawLine }
+            if let data = rawLine.data(using: .utf8),
+               let object = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any],
+               object["kind"] != nil {
+                return "[debug] \(rawLine)"
+            }
+            return "[info] \(rawLine)"
         }
 
         let timestamp = shortTimestamp(object["ts"] as? String)
         let rawLevel = object["level"] as? String ?? "info"
-        let consoleType = consoleLogType(rawLevel)
+        let levelLabel = normalizedLogLevel(rawLevel)
         let result = object["result"] as? String ?? "ok"
         let subsystem = "\(component):\(action)"
 
@@ -353,16 +371,17 @@ struct DemoWorkflowScreen: View {
             messageParts.append("req \(requestID.prefix(12))")
         }
 
-        let typeCol = consoleType.padding(toLength: 10, withPad: " ", startingAt: 0)
+        let typeCol = "[\(levelLabel)]".padding(toLength: 8, withPad: " ", startingAt: 0)
         let subsystemCol = subsystem.padding(toLength: 34, withPad: " ", startingAt: 0)
         return "\(timestamp)  \(typeCol)  \(subsystemCol)  \(messageParts.joined(separator: " | "))"
     }
 
-    private func consoleLogType(_ level: String) -> String {
+    private func normalizedLogLevel(_ level: String) -> String {
         switch level.lowercased() {
-        case "error", "fault": return "Error"
-        case "debug":          return "Debug"
-        default:               return "Default"
+        case "debug": return "debug"
+        case "warn": return "warn"
+        case "error", "fault", "crit", "critical": return "crit"
+        default: return "info"
         }
     }
 

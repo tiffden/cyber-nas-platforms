@@ -26,6 +26,7 @@ final class AppState: ObservableObject {
     @Published var harnessLastBackendCommand: String = ""
     @Published var harnessLastBackendResult: String = ""
     @Published var lastErrorMessage: String?
+    @Published var harnessLogLevelSetting: String = ""
 
     private let api: any ClientAPI
     private let launchNodeID: Int
@@ -52,6 +53,9 @@ final class AppState: ObservableObject {
         if let nodeNamesCSV = environment["SPKI_REALM_HARNESS_NODE_NAMES"], !nodeNamesCSV.isEmpty {
             self.harnessNodeNamesCSV = nodeNamesCSV
         }
+        if let logLevel = environment["SPKI_LOG_LEVEL"], !logLevel.isEmpty {
+            self.harnessLogLevelSetting = logLevel
+        }
     }
 
     // MARK: - UI Labels
@@ -71,6 +75,62 @@ final class AppState: ObservableObject {
         Self.uiVersion
     }
 
+    var harnessLogLevelOptions: [String] {
+        ["debug", "info", "warn", "crit"]
+    }
+
+    var effectiveHarnessLogLevel: String {
+        let normalized = harnessLogLevelSetting
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .lowercased()
+        switch normalized {
+        case "debug", "info", "warn", "crit":
+            return normalized
+        default:
+            return "info"
+        }
+    }
+
+    var effectiveHarnessLogLevelLabel: String {
+        let normalized = harnessLogLevelSetting
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .lowercased()
+        if normalized.isEmpty {
+            return "info (default)"
+        }
+        if normalized == effectiveHarnessLogLevel {
+            return normalized
+        }
+        return "\(effectiveHarnessLogLevel) (fallback from '\(normalized)')"
+    }
+
+    func setHarnessLogLevel(_ level: String) {
+        let normalized = level.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        if harnessLogLevelOptions.contains(normalized) {
+            harnessLogLevelSetting = normalized
+        }
+    }
+
+    var harnessBackendTraceBlock: String {
+        var lines: [String] = []
+        if !harnessLastBackendCommand.isEmpty {
+            lines.append("[debug] backend.call \(harnessLastBackendCommand)")
+        }
+        if !harnessLastBackendResult.isEmpty {
+            let level = harnessLastBackendResult.lowercased().hasPrefix("error") ? "crit" : "info"
+            let resultLines = harnessLastBackendResult
+                .split(separator: "\n", omittingEmptySubsequences: false)
+                .map(String.init)
+            if resultLines.count <= 1 {
+                lines.append("[\(level)] backend.result \(harnessLastBackendResult)")
+            } else {
+                lines.append("[\(level)] backend.result")
+                lines.append(contentsOf: resultLines.map { "  \($0)" })
+            }
+        }
+        return lines.joined(separator: "\n")
+    }
+
     // MARK: - Private Helpers
 
     private func makeRequestID(action: String) -> String {
@@ -86,6 +146,9 @@ final class AppState: ObservableObject {
         var parts: [String] = []
         if !config.realmName.isEmpty {
             parts.append("SPKI_REALM_HARNESS_NAME=\(shellQuote(config.realmName))")
+        }
+        if let logLevel = config.logLevel, !logLevel.isEmpty {
+            parts.append("SPKI_LOG_LEVEL=\(shellQuote(logLevel))")
         }
         if !config.host.isEmpty {
             parts.append("SPKI_REALM_HARNESS_HOST=\(shellQuote(config.host))")
@@ -146,7 +209,8 @@ final class AppState: ObservableObject {
                 host: harnessMachines[0].host,
                 port: harnessMachines[0].port,
                 harnessRoot: root,
-                nodeNamesCSV: nodeNamesCSV.isEmpty ? nil : nodeNamesCSV
+                nodeNamesCSV: nodeNamesCSV.isEmpty ? nil : nodeNamesCSV,
+                logLevel: effectiveHarnessLogLevel
             )
         }
 
@@ -157,7 +221,8 @@ final class AppState: ObservableObject {
             host: harnessHost.trimmingCharacters(in: .whitespacesAndNewlines),
             port: harnessPort,
             harnessRoot: root,
-            nodeNamesCSV: trimmedNodeNames.isEmpty ? nil : trimmedNodeNames
+            nodeNamesCSV: trimmedNodeNames.isEmpty ? nil : trimmedNodeNames,
+            logLevel: effectiveHarnessLogLevel
         )
     }
 
@@ -281,6 +346,7 @@ final class AppState: ObservableObject {
                     port: base.port,
                     harnessRoot: base.harnessRoot,
                     nodeNamesCSV: base.nodeNamesCSV,
+                    logLevel: base.logLevel,
                     bootstrapNodeName: name
                 )
             } else {

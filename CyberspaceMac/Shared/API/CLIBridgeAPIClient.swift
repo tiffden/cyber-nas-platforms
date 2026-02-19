@@ -528,6 +528,9 @@ struct CLIBridgeAPIClient: ClientAPI {
         if !config.realmName.isEmpty {
             merged["SPKI_REALM_HARNESS_NAME"] = config.realmName
         }
+        if let logLevel = config.logLevel, !logLevel.isEmpty {
+            merged["SPKI_LOG_LEVEL"] = logLevel
+        }
         if !config.host.isEmpty {
             merged["SPKI_REALM_HARNESS_HOST"] = config.host
         }
