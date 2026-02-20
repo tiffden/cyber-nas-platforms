@@ -195,7 +195,7 @@ struct DemoWorkflowScreen: View {
                                     Text("\(node.memberCount)").frame(width: 70, alignment: .leading)
                                     Text(listenerUp ? "up" : "—").frame(width: 70, alignment: .leading)
                                     Text(listenerUp ? "mDNS" : "—").frame(width: 80, alignment: .leading)
-                                    Text("\(node.host):\(node.port)").frame(width: 140, alignment: .leading)
+                                    Text("\(node.host):\(String(node.port))").frame(width: 140, alignment: .leading)
                                     Text(node.workdir).lineLimit(1).truncationMode(.middle)
                                 }
                                 .font(.system(.caption, design: .monospaced))
