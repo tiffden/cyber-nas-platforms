@@ -72,7 +72,7 @@ struct DemoWorkflowScreen: View {
                     }
 
                     HStack {
-                        Text("Realm name")
+                        Text("Realm Name")
                             .frame(width: 130, alignment: .leading)
                         TextField("local-realm", text: $realmNameDraft)
                             .textFieldStyle(.roundedBorder)
@@ -80,7 +80,7 @@ struct DemoWorkflowScreen: View {
                     }
 
                     HStack {
-                        Text("Node name")
+                        Text("Node Name")
                             .frame(width: 130, alignment: .leading)
                         TextField("node1", text: $nodeNameDraft)
                             .textFieldStyle(.roundedBorder)
@@ -91,7 +91,7 @@ struct DemoWorkflowScreen: View {
                     }
 
                     HStack {
-                        Text("Bootstrap machine")
+                        Text("Bootstrap Machine")
                             .frame(width: 130, alignment: .leading)
                         Text(bootstrapMachineLabel)
                             .font(.system(.caption, design: .monospaced))
@@ -99,7 +99,7 @@ struct DemoWorkflowScreen: View {
                     }
 
                     HStack {
-                        Text("Join policy")
+                        Text("Join Policy")
                             .frame(width: 130, alignment: .leading)
                         Text("open")
                             .font(.system(.caption, design: .monospaced))
@@ -110,9 +110,9 @@ struct DemoWorkflowScreen: View {
                     }
 
                     HStack {
-                        Text("Log level")
+                        Text("Log Level")
                             .frame(width: 130, alignment: .leading)
-                        Picker("Log level", selection: logLevelSpinnerBinding) {
+                        Picker("Log Level", selection: logLevelSpinnerBinding) {
                             ForEach(appState.harnessLogLevelOptions, id: \.self) { level in
                                 Text(level).tag(level)
                             }
