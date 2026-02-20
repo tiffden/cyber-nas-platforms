@@ -51,6 +51,8 @@ Commands:
   status [N]         Show realm status for each node
   self-join [N]      Join node1 to the configured realm endpoint
   join-all [N]       Join nodes 2..N to node1 (${DEFAULT_MASTER_HOST}:${DEFAULT_MASTER_PORT})
+  listen-bg [N]      Open join listener(s) for nodes 1..N in background (mDNS + TCP)
+  stop-listen-bg [N] Stop background join listener(s) started by listen-bg
   ui <NODE_ID>       Launch one SwiftUI instance using NODE_ID environment
   ui-all-bg [N]      Launch N SwiftUI instances in background with isolated env
   stop-all-bg [N]    Stop background SwiftUI instances started by ui-all-bg
@@ -452,6 +454,65 @@ cmd_stop_all_bg() {
   log_event "info" "harness.stop_all_bg" "ok" "nodes=${count}"
 }
 
+listener_pid_file() {
+  local id="$1"
+  printf "%s/listener.pid" "$(machine_dir "$id")"
+}
+
+cmd_listen_bg() {
+  local count="${1:-1}"
+  log_event "info" "harness.listen_bg" "start" "nodes=${count}"
+  SPKI_DEFAULT_NODE_NAMES="${SPKI_REALM_HARNESS_NODE_NAMES:-${SPKI_DEFAULT_NODE_NAMES:-}}"
+  local realm_bin="${SPKI_REALM_BIN:-$SPKI_ROOT/scheme/chez/spki-realm}"
+  for id in $(seq 1 "$count"); do
+    local pid_file
+    pid_file="$(listener_pid_file "$id")"
+    if [[ -f "$pid_file" ]]; then
+      local existing_pid
+      existing_pid="$(cat "$pid_file" 2>/dev/null || true)"
+      if [[ -n "$existing_pid" ]] && kill -0 "$existing_pid" >/dev/null 2>&1; then
+        echo "node${id} listener already running as PID ${existing_pid}"
+        continue
+      fi
+      rm -f "$pid_file"
+    fi
+    load_machine_env "$id"
+    load_node_env "$id"
+    local log_file="${SPKI_NODE_LOG_DIR}/realm.log"
+    mkdir -p "$(dirname "$log_file")"
+    # Run spki-realm --listen in background; it blocks until killed.
+    "$realm_bin" --listen --name "$SPKI_NODE_NAME" --port "$SPKI_NODE_PORT" \
+      >> "$log_file" 2>&1 &
+    echo "$!" > "$pid_file"
+    echo "node${id} listener PID $! (port ${SPKI_NODE_PORT}, log: $log_file)"
+    log_event "info" "harness.listen_bg" "ok" "node=${id} pid=$! port=${SPKI_NODE_PORT}"
+  done
+}
+
+cmd_stop_listen_bg() {
+  local count="${1:-1}"
+  log_event "info" "harness.stop_listen_bg" "start" "nodes=${count}"
+  SPKI_DEFAULT_NODE_NAMES="${SPKI_REALM_HARNESS_NODE_NAMES:-${SPKI_DEFAULT_NODE_NAMES:-}}"
+  for id in $(seq 1 "$count"); do
+    local pid_file
+    pid_file="$(listener_pid_file "$id")"
+    if [[ ! -f "$pid_file" ]]; then
+      echo "node${id} no listener PID file (already stopped)"
+      continue
+    fi
+    local pid
+    pid="$(cat "$pid_file" 2>/dev/null || true)"
+    if [[ -n "$pid" ]] && kill -0 "$pid" >/dev/null 2>&1; then
+      kill "$pid"
+      echo "node${id} listener stopped (PID ${pid})"
+      log_event "info" "harness.stop_listen_bg" "ok" "node=${id} pid=${pid}"
+    else
+      echo "node${id} listener not running (PID ${pid:-unknown})"
+    fi
+    rm -f "$pid_file"
+  done
+}
+
 cmd_env() {
   local id="${1:-}"
   if [[ -z "$id" ]]; then
@@ -475,6 +536,8 @@ main() {
     status) cmd_status "$@" ;;
     self-join) cmd_self_join "$@" ;;
     join-all) cmd_join_all "$@" ;;
+    listen-bg) cmd_listen_bg "$@" ;;
+    stop-listen-bg) cmd_stop_listen_bg "$@" ;;
     ui) cmd_ui "$@" ;;
     ui-all-bg) cmd_ui_all_bg "$@" ;;
     stop-all-bg) cmd_stop_all_bg "$@" ;;
