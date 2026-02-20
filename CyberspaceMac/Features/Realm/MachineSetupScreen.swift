@@ -35,13 +35,6 @@ struct MachineSetupScreen: View {
         return "\(trace)\n\n\(formatted)"
     }
 
-    private var logLevelSpinnerBinding: Binding<String> {
-        Binding(
-            get: { appState.effectiveHarnessLogLevel },
-            set: { appState.setHarnessLogLevel($0) }
-        )
-    }
-
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             GroupBox("Configuration") {
@@ -75,20 +68,6 @@ struct MachineSetupScreen: View {
                             .textFieldStyle(.roundedBorder)
                     }
 
-                    HStack(spacing: 8) {
-                        Text("Log Level")
-                            .frame(width: 110, alignment: .leading)
-                        Picker("Log Level", selection: logLevelSpinnerBinding) {
-                            ForEach(appState.harnessLogLevelOptions, id: \.self) { level in
-                                Text(level).tag(level)
-                            }
-                        }
-                        .pickerStyle(.menu)
-                        .frame(width: 120)
-                        Text("(applies to backend calls)")
-                            .font(.caption2)
-                            .foregroundStyle(.tertiary)
-                    }
 
                     // Lifecycle controls
                     HStack(spacing: 10) {

@@ -31,13 +31,6 @@ struct DemoWorkflowScreen: View {
         return "\(trace)\n\n\(formatted)"
     }
 
-    private var logLevelSpinnerBinding: Binding<String> {
-        Binding(
-            get: { appState.effectiveHarnessLogLevel },
-            set: { appState.setHarnessLogLevel($0) }
-        )
-    }
-
     private var masterBootstrapped: Bool {
         guard let master = appState.harnessNodes.first(where: { $0.id == 1 })
                         ?? appState.harnessNodes.first else { return false }
@@ -110,21 +103,6 @@ struct DemoWorkflowScreen: View {
                     }
 
                     HStack {
-                        Text("Log Level")
-                            .frame(width: 130, alignment: .leading)
-                        Picker("Log Level", selection: logLevelSpinnerBinding) {
-                            ForEach(appState.harnessLogLevelOptions, id: \.self) { level in
-                                Text(level).tag(level)
-                            }
-                        }
-                        .pickerStyle(.menu)
-                        .frame(width: 120)
-                        Text("(applies to backend calls)")
-                            .font(.caption2)
-                            .foregroundStyle(.tertiary)
-                    }
-
-                    HStack {
                         Button("Bootstrap Realm (Self-Join)") {
                             Task {
                                 appState.harnessRealmName = realmNameDraft
@@ -178,7 +156,9 @@ struct DemoWorkflowScreen: View {
             }
 
             // ── 4. Node Status ────────────────────────────────────────────
-            GroupBox("Node Status") {
+            GroupBox(appState.harnessRealmName.isEmpty
+                        ? "Node Status"
+                        : "Node Status for Realm \(appState.harnessRealmName)") {
                 VStack(alignment: .leading, spacing: 6) {
                     Button("Refresh") {
                         Task {
