@@ -252,6 +252,12 @@ load_node_env() {
   fi
   # shellcheck disable=SC1090
   source "$env_file"
+  # Export key vars so the spki-realm wrapper and background listeners inherit them.
+  # The wrapper uses SPKI_REALM_WORKDIR to cd to the correct per-node directory so
+  # vault paths (.vault/...) resolve to the node's isolated workdir, not the lib dir.
+  export SPKI_REALM_WORKDIR SPKI_CHEZ_LIBDIR SPKI_NODE_NAME SPKI_NODE_PORT \
+         SPKI_KEY_DIR SPKI_NODE_LOG_DIR SPKI_TESTBED_MODE SPKI_REALM_NAME \
+         SPKI_JOIN_HOST SPKI_JOIN_PORT
 }
 
 ensure_build() {
@@ -337,7 +343,13 @@ cmd_self_join() {
   # which creates a membership cert and saves a realm snapshot before exiting.
   # Subsequent --status calls restore from the snapshot and report "joined".
   echo "Bootstrapping realm ${DEFAULT_REALM_NAME} on machine 1 (${DEFAULT_MASTER_HOST}:${SPKI_NODE_PORT})"
+  # Stop any existing listener before wiping node state — write_node_env (above)
+  # wipes the workdir, so a stale listener would hold the wrong keypair.
+  cmd_stop_listen_bg 1 2>/dev/null || true
   run_realm_for_node 1 --json --start-realm --name "$SPKI_NODE_NAME" --port "$SPKI_NODE_PORT"
+  # Open TCP listener + register Bonjour immediately so join-all can connect
+  # and so the node appears in Discovery.app.
+  cmd_listen_bg 1
   log_event "info" "harness.self_join" "ok" "node=1"
 }
 
@@ -524,6 +536,18 @@ cmd_env() {
 
 cmd_clean() {
   log_event "info" "harness.clean" "start" "root=${HARNESS_ROOT}"
+  # Stop any background listeners tracked in the harness root before wiping it.
+  for pid_file in "$HARNESS_ROOT"/*/listener.pid; do
+    [[ -f "$pid_file" ]] || continue
+    local pid
+    pid="$(cat "$pid_file" 2>/dev/null || true)"
+    if [[ -n "$pid" ]] && kill -0 "$pid" >/dev/null 2>&1; then
+      kill "$pid" >/dev/null 2>&1 || true
+      echo "Stopped listener PID ${pid}"
+    fi
+  done
+  # Kill any remaining _cyberspace._tcp dns-sd registrations not tracked by PID files.
+  pkill -f "dns-sd -R.*_cyberspace" 2>/dev/null || true
   rm -rf "$HARNESS_ROOT"
   echo "Removed $HARNESS_ROOT"
 }
