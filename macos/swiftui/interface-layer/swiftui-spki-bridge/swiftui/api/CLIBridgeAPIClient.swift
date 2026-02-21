@@ -509,14 +509,14 @@ struct CLIBridgeAPIClient: ClientAPI {
         }
 
         let cwd = URL(fileURLWithPath: FileManager.default.currentDirectoryPath, isDirectory: true)
-        let script = cwd.appendingPathComponent("Scripts/realm-harness.sh")
+        let script = cwd.appendingPathComponent("scripts/realm-harness.sh")
         if FileManager.default.isExecutableFile(atPath: script.path) {
             return script
         }
         throw APIErrorPayload(
             code: "not_found",
             message: "Could not find realm harness script",
-            details: ["hint": "Set SPKI_REALM_HARNESS_SCRIPT to Scripts/realm-harness.sh"]
+            details: ["hint": "Set SPKI_REALM_HARNESS_SCRIPT to scripts/realm-harness.sh"]
         )
     }
 

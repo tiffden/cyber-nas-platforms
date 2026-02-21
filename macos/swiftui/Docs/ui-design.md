@@ -358,4 +358,4 @@ So your UI/admin model should expose:
 
 ## Related Memo Index
 
-See `spki/macos/swiftui/Docs/ui-memo-reference.md` for lifecycle-relevant memo links and quote excerpts from `spki/scheme/docs/notes/index.html`.
+See `macos/swiftui/Docs/ui-memo-reference.md` for lifecycle-relevant memo links and quote excerpts from `spki/scheme/docs/notes/index.html`.

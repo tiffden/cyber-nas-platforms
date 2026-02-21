@@ -37,6 +37,11 @@ struct DemoWorkflowScreen: View {
         return master.status != "standalone"
     }
 
+    private var allNodesJoined: Bool {
+        guard appState.harnessNodes.count >= appState.harnessNodeCount else { return false }
+        return appState.harnessNodes.allSatisfy { $0.status != "standalone" }
+    }
+
     private var bootstrapMachineLabel: String {
         if let m = appState.harnessMachines.first {
             return "\(m.machineLabel) (\(m.host):\(m.port))"
@@ -117,7 +122,7 @@ struct DemoWorkflowScreen: View {
                             }
                         }
                         .buttonStyle(.borderedProminent)
-                        .disabled(appState.harnessPhase == .notSetup)
+                        .disabled(appState.harnessPhase == .notSetup || masterBootstrapped)
 
                         if let err = appState.lastErrorMessage {
                             Text(err)
@@ -149,10 +154,16 @@ struct DemoWorkflowScreen: View {
                                 await appState.refreshRealmHarnessLog(nodeID: appState.selectedHarnessNodeID)
                             }
                         }
-                        .disabled(!masterBootstrapped)
+                        .buttonStyle(.borderedProminent)
+                        .disabled(!masterBootstrapped || allNodesJoined)
                     }
                     .frame(maxWidth: .infinity, alignment: .leading)
                 }
+            }
+
+            // ── 3.5. Realm Status ─────────────────────────────────────────
+            if !appState.harnessNodes.isEmpty {
+                realmStatusSection()
             }
 
             // ── 4. Node Status ────────────────────────────────────────────
@@ -177,10 +188,9 @@ struct DemoWorkflowScreen: View {
                                 Text("Node").frame(width: 44, alignment: .leading)
                                 Text("Name").frame(width: 120, alignment: .leading)
                                 Text("Status").frame(width: 100, alignment: .leading)
-                                Text("Members").frame(width: 70, alignment: .leading)
-                                Text("Listener").frame(width: 70, alignment: .leading)
-                                Text("Advertised").frame(width: 80, alignment: .leading)
+                                Text("Discovery").frame(width: 80, alignment: .leading)
                                 Text("Host:Port").frame(width: 140, alignment: .leading)
+                                Text("UUID").frame(width: 270, alignment: .leading)
                                 Text("Workdir").frame(maxWidth: .infinity, alignment: .leading)
                             }
                             .font(.caption.weight(.semibold))
@@ -192,10 +202,11 @@ struct DemoWorkflowScreen: View {
                                     Text("#\(node.id)").frame(width: 44, alignment: .leading)
                                     Text(node.nodeName).frame(width: 120, alignment: .leading)
                                     Text(node.status).frame(width: 100, alignment: .leading)
-                                    Text("\(node.memberCount)").frame(width: 70, alignment: .leading)
-                                    Text(listenerUp ? "up" : "—").frame(width: 70, alignment: .leading)
                                     Text(listenerUp ? "mDNS" : "—").frame(width: 80, alignment: .leading)
                                     Text("\(node.host):\(String(node.port))").frame(width: 140, alignment: .leading)
+                                    Text(node.uuid.isEmpty ? "—" : node.uuid)
+                                        .frame(width: 270, alignment: .leading)
+                                        .textSelection(.enabled)
                                     Text(node.workdir).lineLimit(1).truncationMode(.middle)
                                 }
                                 .font(.system(.caption, design: .monospaced))
@@ -268,6 +279,35 @@ struct DemoWorkflowScreen: View {
                 let nanos = UInt64(autoRefreshSeconds) * 1_000_000_000
                 try? await Task.sleep(nanoseconds: nanos)
             }
+        }
+    }
+
+    // MARK: - Realm Status
+
+    @ViewBuilder
+    private func realmStatusSection() -> some View {
+        let master = appState.harnessNodes.first(where: { $0.id == 1 })
+                  ?? appState.harnessNodes[0]
+        GroupBox("Realm") {
+            VStack(alignment: .leading, spacing: 6) {
+                realmInfoRow(label: "Name",   value: appState.harnessRealmName.isEmpty ? "—" : appState.harnessRealmName)
+                realmInfoRow(label: "Nodes",  value: "\(appState.harnessNodes.count)")
+                realmInfoRow(label: "UUID",   value: master.uuid.isEmpty ? "—" : master.uuid)
+                realmInfoRow(label: "Policy", value: master.policy.isEmpty ? "—" : master.policy)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
+    }
+
+    @ViewBuilder
+    private func realmInfoRow(label: String, value: String) -> some View {
+        HStack {
+            Text(label)
+                .frame(width: 130, alignment: .leading)
+                .font(.caption)
+            Text(value)
+                .font(.system(.caption, design: .monospaced))
+                .textSelection(.enabled)
         }
     }
 

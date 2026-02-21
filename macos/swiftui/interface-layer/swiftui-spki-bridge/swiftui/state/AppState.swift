@@ -191,7 +191,7 @@ final class AppState: ObservableObject {
 
     private func harnessScriptCommand(subcommand: String, nodeCount: Int) -> String {
         let config = currentHarnessConfig
-        return "\(harnessEnvPrefix(config: config))Scripts/realm-harness.sh \(subcommand) \(nodeCount)"
+        return "\(harnessEnvPrefix(config: config))scripts/realm-harness.sh \(subcommand) \(nodeCount)"
     }
 
     private var currentHarnessConfig: RealmHarnessCreateConfig {
@@ -419,7 +419,7 @@ final class AppState: ObservableObject {
     func resetRealmHarness() async {
         let requestID = makeRequestID(action: "harness.reset")
         let config = currentHarnessConfig
-        setHarnessBackendCall(command: "\(harnessEnvPrefix(config: config))Scripts/realm-harness.sh stop-all-bg \(harnessNodeCount) && Scripts/realm-harness.sh clean")
+        setHarnessBackendCall(command: "\(harnessEnvPrefix(config: config))scripts/realm-harness.sh stop-all-bg \(harnessNodeCount) && scripts/realm-harness.sh clean")
         logHarnessEvent(action: "harness.reset", result: "start", requestID: requestID)
         do {
             // Stop first; ignore errors — processes may already be down.

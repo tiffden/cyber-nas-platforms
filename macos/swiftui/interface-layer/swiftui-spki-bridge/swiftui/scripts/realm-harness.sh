@@ -1,0 +1,693 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+
+find_repo_root() {
+  local dir="$SCRIPT_DIR"
+  while [[ "$dir" != "/" ]]; do
+    if [[ -f "$dir/macos/swiftui/Package.swift" ]]; then
+      printf "%s" "$dir"
+      return 0
+    fi
+    dir="$(dirname "$dir")"
+  done
+  return 1
+}
+
+SPKI_ROOT="$(find_repo_root || true)"
+UI_ROOT="${SPKI_ROOT:+$SPKI_ROOT/macos/swiftui}"
+DEFAULT_OVERLAY_ROOT="${SPKI_OVERLAY_ROOT:-$SPKI_ROOT/../cyber-nas-overlay}"
+SPKI_BIN_DIR="${SPKI_BIN_DIR:-$DEFAULT_OVERLAY_ROOT/_build/default/bin}"
+export SPKI_BIN_DIR
+# Keep harness data out of the repo and away from normal runtime state by default.
+HARNESS_ROOT="${SPKI_REALM_HARNESS_ROOT:-$HOME/.cyberspace/testbed}"
+HARNESS_LOG_FILE="${SPKI_REALM_HARNESS_LOG_FILE:-$HARNESS_ROOT/harness.log}"
+DEFAULT_NODES=3
+DEFAULT_REALM_NAME="${SPKI_REALM_HARNESS_NAME:-local-realm}"
+DEFAULT_MASTER_HOST="${SPKI_REALM_HARNESS_HOST:-127.0.0.1}"
+DEFAULT_MASTER_PORT="${SPKI_REALM_HARNESS_PORT:-7780}"
+
+if [[ -z "$SPKI_ROOT" ]]; then
+  echo "Error: could not locate repo root (missing macos/swiftui/Package.swift)." >&2
+  exit 1
+fi
+
+if [[ ! -f "$UI_ROOT/Package.swift" ]]; then
+  echo "Error: could not locate UI package at $UI_ROOT (missing Package.swift)." >&2
+  exit 1
+fi
+
+json_escape() {
+  local value="${1:-}"
+  value="${value//\\/\\\\}"
+  value="${value//\"/\\\"}"
+  value="${value//$'\n'/\\n}"
+  printf "%s" "$value"
+}
+
+log_event() {
+  local level="$1"
+  local action="$2"
+  local result="$3"
+  local message="${4:-}"
+  local request_id="${SPKI_REQUEST_ID:-n/a}"
+  local ts
+  ts="$(date -u +"%Y-%m-%dT%H:%M:%SZ")"
+
+  local line
+  line="{\"ts\":\"$(json_escape "$ts")\",\"level\":\"$(json_escape "$level")\",\"component\":\"realm_harness\",\"action\":\"$(json_escape "$action")\",\"result\":\"$(json_escape "$result")\",\"request_id\":\"$(json_escape "$request_id")\",\"pid\":\"$$\""
+  if [[ -n "$message" ]]; then
+    line="${line},\"message\":\"$(json_escape "$message")\""
+  fi
+  line="${line}}"
+
+  echo "$line" >&2
+  mkdir -p "$(dirname "$HARNESS_LOG_FILE")" >/dev/null 2>&1 || true
+  echo "$line" >>"$HARNESS_LOG_FILE" 2>/dev/null || true
+}
+
+usage() {
+  cat <<EOF
+Usage: $(basename "$0") <command> [args]
+
+Commands:
+  init [N]           Create N isolated node workdirs (default: ${DEFAULT_NODES})
+  status [N]         Show realm status for each node
+  self-join [N]      Join node1 to the configured realm endpoint
+  join-all [N]       Join nodes 2..N to node1 (${DEFAULT_MASTER_HOST}:${DEFAULT_MASTER_PORT})
+  listen-bg [N]      Open join listener(s) for nodes 1..N in background (mDNS + TCP)
+  stop-listen-bg [N] Stop background join listener(s) started by listen-bg
+  ui <NODE_ID>       Launch one SwiftUI instance using NODE_ID environment
+  ui-all-bg [N]      Launch N SwiftUI instances in background with isolated env
+  stop-all-bg [N]    Stop background SwiftUI instances started by ui-all-bg
+  env <NODE_ID>      Print node env file path
+  clean              Remove harness data at ${HARNESS_ROOT}
+
+Notes:
+  - Each machine gets its own top-level directory under:
+      ${HARNESS_ROOT}/<machine-name>/
+    Node runtime state is nested under:
+      <machine-name>/<realm-name>/<node-name>/
+    Machine names come from SPKI_DEFAULT_NODE_NAMES (CSV, stored in machine.env).
+  - UI launch reuses run-local.sh with SPKI_ENV_FILE + SPKI_SKIP_BUILD=1.
+EOF
+}
+
+resolve_spki_bin() {
+  local base="$1"
+  local hyphen_name="${base//_/-}"
+  local exe_path="$SPKI_BIN_DIR/$base.exe"
+  local plain_path="$SPKI_BIN_DIR/$base"
+  if command -v "$hyphen_name" >/dev/null 2>&1; then
+    command -v "$hyphen_name"
+    return 0
+  fi
+  if command -v "$base" >/dev/null 2>&1; then
+    command -v "$base"
+    return 0
+  fi
+  if [[ -x "$exe_path" ]]; then
+    printf "%s" "$exe_path"
+    return 0
+  fi
+  if [[ -x "$plain_path" ]]; then
+    printf "%s" "$plain_path"
+    return 0
+  fi
+  echo "Error: missing executable for $base" >&2
+  echo "Checked PATH names: $hyphen_name, $base" >&2
+  echo "Checked: $exe_path" >&2
+  echo "Checked: $plain_path" >&2
+  echo "Set the corresponding SPKI_*_BIN env var or install $hyphen_name on PATH." >&2
+  exit 1
+}
+
+# Return the top-level directory for a virtual machine.
+# Directory name comes from SPKI_DEFAULT_NODE_NAMES (the machine label, stored in machine.env).
+machine_dir() {
+  local id="$1"
+  local name
+  name="$(resolve_node_name "$id")"
+  printf "%s/%s" "$HARNESS_ROOT" "$name"
+}
+
+# Realm-scoped runtime root for a machine.
+realm_dir() {
+  local id="$1"
+  printf "%s/%s" "$(machine_dir "$id")" "$DEFAULT_REALM_NAME"
+}
+
+# Node runtime root under machine/realm.
+# Uses the resolved node name (same logic as write_node_env) so the directory
+# matches the node identity rather than a generic index like "node1".
+node_runtime_dir() {
+  local id="$1"
+  local name
+  if [[ "$id" == "1" ]] && [[ -n "${SPKI_BOOTSTRAP_NODE_NAME:-}" ]]; then
+    name="$SPKI_BOOTSTRAP_NODE_NAME"
+  else
+    name="$(resolve_node_name "$id")"
+  fi
+  printf "%s/%s" "$(realm_dir "$id")" "$name"
+}
+
+# Keep node_dir as an alias so internal callsites need not change yet.
+node_dir() { machine_dir "$1"; }
+
+node_env_file() {
+  local id="$1"
+  printf "%s/node.env" "$(machine_dir "$id")"
+}
+
+machine_env_file() {
+  local id="$1"
+  printf "%s/machine.env" "$(machine_dir "$id")"
+}
+
+# Write stable listener config for a machine.
+# Called by cmd_init. Does NOT contain realm name or node identity.
+write_machine_env() {
+  local id="$1"
+  local machine_root machine_name port
+  machine_root="$(machine_dir "$id")"
+  machine_name="$(resolve_node_name "$id")"
+  port=$((DEFAULT_MASTER_PORT + id - 1))
+
+  mkdir -p "$machine_root"
+  cat >"$(machine_env_file "$id")" <<EOF
+# Generated by realm-harness.sh -- machine listener config for machine ${id}.
+# Stable across realm changes; does not contain realm name or node identity.
+SPKI_MACHINE_ID="${id}"
+SPKI_MACHINE_NAME="${machine_name}"
+SPKI_NODE_PORT="${port}"
+SPKI_JOIN_HOST="${DEFAULT_MASTER_HOST}"
+SPKI_JOIN_PORT="${DEFAULT_MASTER_PORT}"
+SPKI_REALM_HARNESS_ROOT="${HARNESS_ROOT}"
+SPKI_DEFAULT_NODE_NAMES="${SPKI_REALM_HARNESS_NODE_NAMES:-}"
+SPKI_TESTBED_MODE="1"
+EOF
+}
+
+# Source machine.env so downstream functions (write_node_env, load_node_env)
+# have machine-level config even when the Swift app is not providing env vars
+# (e.g. CLI use or after an app restart).
+load_machine_env() {
+  local id="$1"
+  local env_file
+  env_file="$(machine_env_file "$id")"
+  if [[ ! -f "$env_file" ]]; then
+    echo "Error: machine env not found: $env_file" >&2
+    echo "Run: $(basename "$0") init" >&2
+    exit 1
+  fi
+  # shellcheck disable=SC1090
+  source "$env_file"
+}
+
+write_node_env() {
+  local id="$1"
+  local machine_root runtime_root
+  machine_root="$(machine_dir "$id")"
+  runtime_root="$(node_runtime_dir "$id")"
+  local workdir="$runtime_root/work"
+  local keydir="$runtime_root/keys"
+  local logdir="$runtime_root/logs"
+  local node_name
+  # SPKI_BOOTSTRAP_NODE_NAME overrides the default name for node 1 only (set by UI self-join).
+  if [[ "$id" == "1" ]] && [[ -n "${SPKI_BOOTSTRAP_NODE_NAME:-}" ]]; then
+    node_name="$SPKI_BOOTSTRAP_NODE_NAME"
+  else
+    node_name="$(resolve_node_name "$id")"
+  fi
+  local port=$((DEFAULT_MASTER_PORT + id - 1))
+  local node_uuid
+  node_uuid="$(uuidgen | tr '[:upper:]' '[:lower:]')"
+
+  # Wipe workdir and keydir so re-init always starts with a clean identity
+  # slate. Stale realm state or keys from a previous run would cause --start-realm
+  # to conflict on the stored node name or key material.
+  rm -rf "$workdir" "$keydir"
+  mkdir -p "$machine_root" "$workdir/.vault" "$keydir" "$logdir"
+  : >"$logdir/node.log"
+  : >"$logdir/realm.log"
+  rm -f "$logdir/ui.pid"
+
+  cat >"$(node_env_file "$id")" <<EOF
+# Generated by realm-harness.sh for node ${id}
+SPKI_REALM_WORKDIR="${workdir}"
+SPKI_KEY_DIR="${keydir}"
+SPKI_NODE_ID="${id}"
+SPKI_NODE_NAME="${node_name}"
+SPKI_NODE_UUID="${node_uuid}"
+SPKI_NODE_PORT="${port}"
+SPKI_NODE_LOG_DIR="${logdir}"
+SPKI_REALM_NAME="${DEFAULT_REALM_NAME}"
+SPKI_JOIN_HOST="${DEFAULT_MASTER_HOST}"
+SPKI_JOIN_PORT="${DEFAULT_MASTER_PORT}"
+SPKI_REALM_HARNESS_ROOT="${HARNESS_ROOT}"
+SPKI_TESTBED_MODE="1"
+SPKI_BIN_DIR="${SPKI_BIN_DIR}"
+EOF
+}
+
+resolve_node_name() {
+  local id="$1"
+  local fallback="node${id}"
+  local csv="${SPKI_DEFAULT_NODE_NAMES:-}"
+  if [[ -z "$csv" ]]; then
+    printf "%s" "$fallback"
+    return 0
+  fi
+
+  local index=$((id - 1))
+  local raw
+  IFS=',' read -r -a names <<<"$csv"
+  if (( index < 0 || index >= ${#names[@]} )); then
+    printf "%s" "$fallback"
+    return 0
+  fi
+
+  raw="${names[$index]}"
+  raw="${raw#"${raw%%[![:space:]]*}"}"
+  raw="${raw%"${raw##*[![:space:]]}"}"
+  if [[ -z "$raw" ]]; then
+    printf "%s" "$fallback"
+    return 0
+  fi
+  printf "%s" "$raw"
+}
+
+load_node_env() {
+  local id="$1"
+  local env_file
+  env_file="$(node_env_file "$id")"
+  if [[ ! -f "$env_file" ]]; then
+    echo "Error: node env not found: $env_file" >&2
+    echo "Run: $(basename "$0") init" >&2
+    exit 1
+  fi
+  # shellcheck disable=SC1090
+  source "$env_file"
+  # Export key vars so the spki-realm wrapper and background listeners inherit them.
+  # The wrapper uses SPKI_REALM_WORKDIR to cd to the correct per-node directory so
+  # vault paths (.vault/...) resolve to the node's isolated workdir, not the lib dir.
+  export SPKI_REALM_WORKDIR SPKI_BIN_DIR SPKI_NODE_NAME SPKI_NODE_UUID \
+         SPKI_NODE_PORT SPKI_KEY_DIR SPKI_NODE_LOG_DIR SPKI_TESTBED_MODE \
+         SPKI_REALM_NAME SPKI_JOIN_HOST SPKI_JOIN_PORT
+}
+
+ensure_build() {
+  # If SPKI_SKIP_BUILD is set, skip entirely.
+  if [[ -n "${SPKI_SKIP_BUILD:-}" ]]; then
+    return 0
+  fi
+  # If spki-realm is already available on PATH or in SPKI_BIN_DIR, no build needed.
+  local realm_bin_name="${SPKI_REALM_BIN:-spki-realm}"
+  if command -v spki-realm >/dev/null 2>&1; then
+    return 0
+  fi
+  if [[ -x "${SPKI_BIN_DIR:-}/spki-realm" ]]; then
+    return 0
+  fi
+  if [[ -x "${SPKI_BIN_DIR:-}/spki_realm.exe" ]]; then
+    return 0
+  fi
+  if ! command -v dune >/dev/null 2>&1; then
+    echo "Error: spki-realm not found on PATH and dune is not installed." >&2
+    echo "Install with: cd ~/dev/cyber-nas-overlay/spki && make install" >&2
+    exit 1
+  fi
+  if [[ ! -f "$DEFAULT_OVERLAY_ROOT/dune-project" ]]; then
+    echo "Error: could not find dune-project at $DEFAULT_OVERLAY_ROOT" >&2
+    echo "Set SPKI_OVERLAY_ROOT or SPKI_BIN_DIR to your overlay build output." >&2
+    exit 1
+  fi
+  echo "Building SPKI binaries in $DEFAULT_OVERLAY_ROOT..."
+  (cd "$DEFAULT_OVERLAY_ROOT" && dune build)
+}
+
+run_realm_for_node() {
+  local id="$1"
+  shift
+  load_node_env "$id"
+  local realm_bin
+  local node_log
+  # Use the spki-realm wrapper (not the .sps directly) so --libdirs and cwd are
+  # set correctly whether called from here or from CLIBridgeAPIClient via Process.
+  realm_bin="${SPKI_REALM_BIN:-$(resolve_spki_bin spki_realm)}"
+  node_log="${SPKI_NODE_LOG_DIR:-$(node_runtime_dir "$id")/logs}/realm.log"
+  mkdir -p "$(dirname "$node_log")"
+  (
+    # All env vars (SPKI_REALM_WORKDIR, SPKI_KEY_DIR, SPKI_BIN_DIR, etc.)
+    # are inherited from load_node_env above.
+    "$realm_bin" "$@" \
+      > >(tee -a "$node_log") \
+      2> >(tee -a "$node_log" >&2)
+  )
+}
+
+cmd_init() {
+  local count="${1:-$DEFAULT_NODES}"
+  if ! [[ "$count" =~ ^[0-9]+$ ]] || (( count < 1 )); then
+    echo "Error: node count must be a positive integer" >&2
+    exit 1
+  fi
+  log_event "info" "harness.init" "start" "nodes=${count}"
+  # Propagate the incoming machine-names CSV to SPKI_DEFAULT_NODE_NAMES so that
+  # resolve_node_name (called by machine_dir during this loop) can find the names
+  # before machine.env has been written for the first time.
+  SPKI_DEFAULT_NODE_NAMES="${SPKI_REALM_HARNESS_NODE_NAMES:-${SPKI_DEFAULT_NODE_NAMES:-}}"
+  mkdir -p "$HARNESS_ROOT"
+  # Create machine directories and write machine.env (listener config).
+  # Realm and node sub-directories (work, keys, logs) are created at Bootstrap Realm time.
+  for id in $(seq 1 "$count"); do
+    write_machine_env "$id"
+    log_event "info" "harness.init" "machine_ready" "id=${id} path=$(machine_dir "$id")"
+  done
+  echo "Created ${count} machine directories under ${HARNESS_ROOT}"
+  log_event "info" "harness.init" "ok" "nodes=${count}"
+}
+
+cmd_status() {
+  local count="${1:-$DEFAULT_NODES}"
+  log_event "info" "harness.status" "start" "nodes=${count}"
+  for id in $(seq 1 "$count"); do
+    local env_file
+    env_file="$(node_env_file "$id")"
+    if [[ ! -f "$env_file" ]]; then
+      # Machine directory exists but realm has not been bootstrapped yet.
+      log_event "info" "harness.status" "not_bootstrapped" "id=${id}"
+      continue
+    fi
+    echo "=== node${id} ==="
+    run_realm_for_node "$id" --json --status || true
+  done
+  log_event "info" "harness.status" "ok" "nodes=${count}"
+}
+
+cmd_self_join() {
+  log_event "info" "harness.self_join" "start" "node=1"
+  # Resolve machine names from the incoming CSV (mirrors cmd_init).
+  # Must be set before machine_dir/load_machine_env calls that use resolve_node_name.
+  SPKI_DEFAULT_NODE_NAMES="${SPKI_REALM_HARNESS_NODE_NAMES:-${SPKI_DEFAULT_NODE_NAMES:-}}"
+  ensure_build
+  # Source machine.env so realm/node dirs are created with the correct machine config.
+  # write_node_env creates <machine>/<realm>/<node>/ and writes node.env.
+  load_machine_env 1
+  write_node_env 1
+  load_node_env 1
+  # Bootstrap machine 1 as realm master. --start-realm calls start-join-listener,
+  # which creates a membership cert and saves a realm snapshot before exiting.
+  # Subsequent --status calls restore from the snapshot and report "joined".
+  echo "Bootstrapping realm ${DEFAULT_REALM_NAME} on machine 1 (${DEFAULT_MASTER_HOST}:${SPKI_NODE_PORT})"
+  # Stop any existing listener before wiping node state — write_node_env (above)
+  # wipes the workdir, so a stale listener would hold the wrong keypair.
+  cmd_stop_listen_bg 1 2>/dev/null || true
+  run_realm_for_node 1 --json --start-realm --name "$SPKI_NODE_NAME" --port "$SPKI_NODE_PORT"
+  # Open TCP listener + register Bonjour immediately so join-all can connect
+  # and so the node appears in Discovery.app.
+  cmd_listen_bg 1
+  log_event "info" "harness.self_join" "ok" "node=1"
+}
+
+cmd_join_all() {
+  local count="${1:-$DEFAULT_NODES}"
+  if (( count < 2 )); then
+    echo "Need at least 2 nodes for join-all" >&2
+    exit 1
+  fi
+  log_event "info" "harness.join_all" "start" "nodes=${count}"
+  # Resolve machine names from the incoming CSV before any machine_dir/load_machine_env calls.
+  SPKI_DEFAULT_NODE_NAMES="${SPKI_REALM_HARNESS_NODE_NAMES:-${SPKI_DEFAULT_NODE_NAMES:-}}"
+  ensure_build
+  for id in $(seq 2 "$count"); do
+    load_machine_env "$id"
+    write_node_env "$id"
+    load_node_env "$id"
+    echo "Joining machine ${id} (${SPKI_MACHINE_NAME}) -> ${DEFAULT_MASTER_HOST}:${DEFAULT_MASTER_PORT}"
+    run_realm_for_node "$id" --json --join --name "$SPKI_NODE_NAME" --host "$DEFAULT_MASTER_HOST" --port "$DEFAULT_MASTER_PORT"
+    # Start TCP listener and register mDNS for this node now that it has joined.
+    _start_listener_for_node "$id"
+  done
+  log_event "info" "harness.join_all" "ok" "nodes=${count}"
+}
+
+cmd_ui() {
+  local id="${1:-}"
+  if [[ -z "$id" ]]; then
+    echo "Usage: $(basename "$0") ui <NODE_ID>" >&2
+    exit 1
+  fi
+  local env_file
+  env_file="$(node_env_file "$id")"
+  if [[ ! -f "$env_file" ]]; then
+    echo "Error: node env not found: $env_file" >&2
+    echo "Run: $(basename "$0") init" >&2
+    exit 1
+  fi
+  log_event "info" "harness.ui" "start" "node=${id}"
+  SPKI_ENV_FILE="$env_file" SPKI_SKIP_BUILD=1 "$SCRIPT_DIR/run-local.sh"
+  log_event "info" "harness.ui" "ok" "node=${id}"
+}
+
+cmd_ui_all_bg() {
+  local count="${1:-$DEFAULT_NODES}"
+  local ui_binary="${UI_ROOT}/.build/debug/CyberspaceMac"
+  log_event "info" "harness.ui_all_bg" "start" "nodes=${count}"
+  if [[ ! -x "$ui_binary" ]]; then
+    log_event "info" "harness.ui_all_bg.prebuild" "start" "building CyberspaceMac once before background launch"
+    (
+      cd "$UI_ROOT"
+      swift build -c debug --product CyberspaceMac
+    )
+    log_event "info" "harness.ui_all_bg.prebuild" "ok" "ui binary ready"
+  fi
+  for id in $(seq 1 "$count"); do
+    local env_file log_file pid_file
+    env_file="$(node_env_file "$id")"
+    if [[ ! -f "$env_file" ]]; then
+      echo "Error: node env not found: $env_file" >&2
+      echo "Run: $(basename "$0") init ${count}" >&2
+      exit 1
+    fi
+    load_node_env "$id"
+    log_file="${SPKI_NODE_LOG_DIR:-$(node_runtime_dir "$id")/logs}/node.log"
+    pid_file="${SPKI_NODE_LOG_DIR:-$(node_runtime_dir "$id")/logs}/ui.pid"
+    if [[ -f "$pid_file" ]]; then
+      local existing_pid
+      existing_pid="$(cat "$pid_file" 2>/dev/null || true)"
+      if [[ -n "$existing_pid" ]] && kill -0 "$existing_pid" >/dev/null 2>&1; then
+        echo "node${id} UI already running as PID ${existing_pid} (log: $log_file)"
+        continue
+      fi
+    fi
+    SPKI_ENV_FILE="$env_file" SPKI_SKIP_BUILD=1 SPKI_SKIP_UI_BUILD=1 SPKI_REQUEST_ID="${SPKI_REQUEST_ID:-}" "$SCRIPT_DIR/run-local.sh" >"$log_file" 2>&1 &
+    echo "$!" >"$pid_file"
+    echo "node${id} UI PID $! (log: $log_file)"
+    log_event "info" "harness.ui_all_bg" "ok" "node=${id} pid=$!"
+  done
+}
+
+cmd_stop_all_bg() {
+  local count="${1:-$DEFAULT_NODES}"
+  log_event "info" "harness.stop_all_bg" "start" "nodes=${count}"
+  for id in $(seq 1 "$count"); do
+    local env_file log_file pid_file
+    env_file="$(node_env_file "$id")"
+    if [[ ! -f "$env_file" ]]; then
+      echo "node${id} no env file (already cleaned)"
+      continue
+    fi
+    load_node_env "$id"
+    log_file="${SPKI_NODE_LOG_DIR:-$(node_runtime_dir "$id")/logs}/node.log"
+    pid_file="${SPKI_NODE_LOG_DIR:-$(node_runtime_dir "$id")/logs}/ui.pid"
+    if [[ ! -f "$pid_file" ]]; then
+      echo "node${id} no PID file (already stopped)"
+      continue
+    fi
+
+    local pid
+    pid="$(cat "$pid_file" 2>/dev/null || true)"
+    if [[ -z "$pid" ]]; then
+      rm -f "$pid_file"
+      echo "node${id} PID file empty (cleaned)"
+      continue
+    fi
+
+    if kill -0 "$pid" >/dev/null 2>&1; then
+      kill "$pid" >/dev/null 2>&1 || true
+      echo "node${id} stopped PID ${pid} (log: $log_file)"
+    else
+      echo "node${id} PID ${pid} not running (cleaned)"
+    fi
+    rm -f "$pid_file"
+  done
+  log_event "info" "harness.stop_all_bg" "ok" "nodes=${count}"
+}
+
+listener_pid_file() {
+  local id="$1"
+  printf "%s/listener.pid" "$(machine_dir "$id")"
+}
+
+listener_mdns_pid_file() {
+  local id="$1"
+  printf "%s/listener-mdns.pid" "$(machine_dir "$id")"
+}
+
+# Start TCP listener + mDNS advertisement for a single node id.
+# Caller must have already loaded machine and node env (or this function will load them).
+_start_listener_for_node() {
+  local id="$1"
+  local realm_bin="${SPKI_REALM_BIN:-$(resolve_spki_bin spki_realm)}"
+  local pid_file
+  pid_file="$(listener_pid_file "$id")"
+  if [[ -f "$pid_file" ]]; then
+    local existing_pid
+    existing_pid="$(cat "$pid_file" 2>/dev/null || true)"
+    if [[ -n "$existing_pid" ]] && kill -0 "$existing_pid" >/dev/null 2>&1; then
+      echo "node${id} listener already running as PID ${existing_pid}"
+      return 0
+    fi
+    rm -f "$pid_file"
+  fi
+  load_machine_env "$id"
+  load_node_env "$id"
+  local log_file="${SPKI_NODE_LOG_DIR}/realm.log"
+  mkdir -p "$(dirname "$log_file")"
+  # Kill any stale process holding the port (PID file may be out of date after a crash).
+  local stale_pids
+  stale_pids="$(lsof -ti "tcp:${SPKI_NODE_PORT}" 2>/dev/null || true)"
+  if [[ -n "$stale_pids" ]]; then
+    echo "$stale_pids" | xargs kill 2>/dev/null || true
+    sleep 0.3
+    log_event "info" "harness.listen_bg" "killed_stale" "node=${id} port=${SPKI_NODE_PORT} pids=${stale_pids}"
+  fi
+  # Run spki-realm --listen in background; it blocks until killed.
+  "$realm_bin" --listen --name "$SPKI_NODE_NAME" --port "$SPKI_NODE_PORT" \
+    >> "$log_file" 2>&1 &
+  echo "$!" > "$pid_file"
+  echo "node${id} listener PID $! (port ${SPKI_NODE_PORT}, log: $log_file)"
+  log_event "info" "harness.listen_bg" "ok" "node=${id} pid=$! port=${SPKI_NODE_PORT}"
+  # Register a Bonjour/mDNS advertisement so Discovery.app and peers can find the node.
+  local mdns_pid_file
+  mdns_pid_file="$(listener_mdns_pid_file "$id")"
+  # Kill any stale dns-sd for this node before re-registering.
+  if [[ -f "$mdns_pid_file" ]]; then
+    local old_mdns_pid
+    old_mdns_pid="$(cat "$mdns_pid_file" 2>/dev/null || true)"
+    [[ -n "$old_mdns_pid" ]] && kill "$old_mdns_pid" 2>/dev/null || true
+    rm -f "$mdns_pid_file"
+  fi
+  if command -v /usr/bin/dns-sd >/dev/null 2>&1; then
+    local mdns_title="${SPKI_REALM_NAME} : ${SPKI_NODE_NAME}"
+    /usr/bin/dns-sd -R "$mdns_title" _cyberspace._tcp local "$SPKI_NODE_PORT" \
+      "Realm=${SPKI_REALM_NAME}" "UUID=${SPKI_NODE_UUID}" \
+      >> "$log_file" 2>&1 &
+    echo "$!" > "$mdns_pid_file"
+    echo "node${id} mDNS registered '${mdns_title}' _cyberspace._tcp port ${SPKI_NODE_PORT} realm=${SPKI_REALM_NAME} uuid=${SPKI_NODE_UUID} (PID $!)"
+    log_event "info" "harness.listen_bg" "mdns_registered" "node=${id} name=${SPKI_NODE_NAME} port=${SPKI_NODE_PORT} realm=${SPKI_REALM_NAME} uuid=${SPKI_NODE_UUID} pid=$!"
+  else
+    log_event "warn" "harness.listen_bg" "mdns_skipped" "node=${id} dns-sd not found at /usr/bin/dns-sd"
+  fi
+}
+
+cmd_listen_bg() {
+  local count="${1:-1}"
+  log_event "info" "harness.listen_bg" "start" "nodes=${count}"
+  SPKI_DEFAULT_NODE_NAMES="${SPKI_REALM_HARNESS_NODE_NAMES:-${SPKI_DEFAULT_NODE_NAMES:-}}"
+  for id in $(seq 1 "$count"); do
+    _start_listener_for_node "$id"
+  done
+}
+
+cmd_stop_listen_bg() {
+  local count="${1:-1}"
+  log_event "info" "harness.stop_listen_bg" "start" "nodes=${count}"
+  SPKI_DEFAULT_NODE_NAMES="${SPKI_REALM_HARNESS_NODE_NAMES:-${SPKI_DEFAULT_NODE_NAMES:-}}"
+  for id in $(seq 1 "$count"); do
+    local pid_file
+    pid_file="$(listener_pid_file "$id")"
+    if [[ ! -f "$pid_file" ]]; then
+      echo "node${id} no listener PID file (already stopped)"
+    else
+      local pid
+      pid="$(cat "$pid_file" 2>/dev/null || true)"
+      if [[ -n "$pid" ]] && kill -0 "$pid" >/dev/null 2>&1; then
+        kill "$pid"
+        echo "node${id} listener stopped (PID ${pid})"
+        log_event "info" "harness.stop_listen_bg" "ok" "node=${id} pid=${pid}"
+      else
+        echo "node${id} listener not running (PID ${pid:-unknown})"
+      fi
+      rm -f "$pid_file"
+    fi
+    # Also stop the mDNS advertisement for this node.
+    local mdns_pid_file
+    mdns_pid_file="$(listener_mdns_pid_file "$id")"
+    if [[ -f "$mdns_pid_file" ]]; then
+      local mdns_pid
+      mdns_pid="$(cat "$mdns_pid_file" 2>/dev/null || true)"
+      if [[ -n "$mdns_pid" ]] && kill -0 "$mdns_pid" >/dev/null 2>&1; then
+        kill "$mdns_pid"
+        echo "node${id} mDNS unregistered (PID ${mdns_pid})"
+        log_event "info" "harness.stop_listen_bg" "mdns_stopped" "node=${id} pid=${mdns_pid}"
+      fi
+      rm -f "$mdns_pid_file"
+    fi
+  done
+}
+
+cmd_env() {
+  local id="${1:-}"
+  if [[ -z "$id" ]]; then
+    echo "Usage: $(basename "$0") env <NODE_ID>" >&2
+    exit 1
+  fi
+  node_env_file "$id"
+}
+
+cmd_clean() {
+  log_event "info" "harness.clean" "start" "root=${HARNESS_ROOT}"
+  # Stop any background listeners tracked in the harness root before wiping it.
+  for pid_file in "$HARNESS_ROOT"/*/listener.pid; do
+    [[ -f "$pid_file" ]] || continue
+    local pid
+    pid="$(cat "$pid_file" 2>/dev/null || true)"
+    if [[ -n "$pid" ]] && kill -0 "$pid" >/dev/null 2>&1; then
+      kill "$pid" >/dev/null 2>&1 || true
+      echo "Stopped listener PID ${pid}"
+    fi
+  done
+  # Kill any remaining _cyberspace._tcp dns-sd registrations not tracked by PID files.
+  pkill -f "dns-sd -R.*_cyberspace" 2>/dev/null || true
+  rm -rf "$HARNESS_ROOT"
+  echo "Removed $HARNESS_ROOT"
+}
+
+main() {
+  local cmd="${1:-}"
+  shift || true
+  case "$cmd" in
+    init) cmd_init "$@" ;;
+    status) cmd_status "$@" ;;
+    self-join) cmd_self_join "$@" ;;
+    join-all) cmd_join_all "$@" ;;
+    listen-bg) cmd_listen_bg "$@" ;;
+    stop-listen-bg) cmd_stop_listen_bg "$@" ;;
+    ui) cmd_ui "$@" ;;
+    ui-all-bg) cmd_ui_all_bg "$@" ;;
+    stop-all-bg) cmd_stop_all_bg "$@" ;;
+    env) cmd_env "$@" ;;
+    clean) cmd_clean ;;
+    ""|-h|--help|help) usage ;;
+    *)
+      echo "Unknown command: $cmd" >&2
+      usage
+      exit 1
+      ;;
+  esac
+}
+
+main "$@"

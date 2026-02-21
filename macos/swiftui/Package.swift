@@ -18,7 +18,6 @@ let package = Package(
             name: "CyberspaceMac",
             path: "CyberspaceMac",
             exclude: [
-                "README.md",
                 "Resources/Assets.xcassets/.gitkeep",
                 "Resources/Preview Content/.gitkeep",
                 "App/.gitkeep",

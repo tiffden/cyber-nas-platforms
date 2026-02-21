@@ -81,8 +81,6 @@ struct RealmHarnessNodeMetadata: Identifiable, Equatable {
     let port: Int
     let status: String
     let memberCount: Int
-    let policy: String
-    let uuid: String
 }
 
 struct RealmHarnessInitResponse: Equatable {

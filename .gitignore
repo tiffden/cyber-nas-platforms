@@ -1,0 +1,11 @@
+# Local editor settings
+.vscode/
+
+# SwiftPM build artifacts
+macos/swiftui/.build/
+macos/swiftui/interface-layer/**/.build/
+.realm-harness/
+.swiftpm/
+
+# macOS Finder metadata
+.DS_Store
