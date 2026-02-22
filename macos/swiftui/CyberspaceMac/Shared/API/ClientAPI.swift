@@ -4,6 +4,7 @@ protocol ClientAPI {
     func createRealmTestEnvironment(nodeCount: Int, config: RealmHarnessCreateConfig?, requestID: String?) async throws -> RealmHarnessInitResponse
     func selfJoinRealmHarness(nodeCount: Int, config: RealmHarnessCreateConfig?, requestID: String?) async throws -> RealmHarnessLaunchResponse
     func inviteOtherRealmHarnessNodes(nodeCount: Int, config: RealmHarnessCreateConfig?, requestID: String?) async throws -> RealmHarnessLaunchResponse
+    func joinSingleRealmHarnessNode(nodeID: Int, config: RealmHarnessCreateConfig?, requestID: String?) async throws -> RealmHarnessLaunchResponse
     func launchRealmHarnessUIs(nodeCount: Int, config: RealmHarnessCreateConfig?, requestID: String?) async throws -> RealmHarnessLaunchResponse
     func stopRealmHarnessUIs(nodeCount: Int, config: RealmHarnessCreateConfig?, requestID: String?) async throws -> RealmHarnessLaunchResponse
     func realmHarnessNodes(nodeCount: Int, config: RealmHarnessCreateConfig?, requestID: String?) async throws -> [RealmHarnessNodeMetadata]
@@ -27,6 +28,10 @@ extension ClientAPI {
 
     func inviteOtherRealmHarnessNodes(nodeCount: Int) async throws -> RealmHarnessLaunchResponse {
         try await inviteOtherRealmHarnessNodes(nodeCount: nodeCount, config: nil, requestID: nil)
+    }
+
+    func joinSingleRealmHarnessNode(nodeID: Int) async throws -> RealmHarnessLaunchResponse {
+        try await joinSingleRealmHarnessNode(nodeID: nodeID, config: nil, requestID: nil)
     }
 
     func launchRealmHarnessUIs(nodeCount: Int) async throws -> RealmHarnessLaunchResponse {

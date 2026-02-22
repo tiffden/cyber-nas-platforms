@@ -50,6 +50,10 @@ struct RealmHarnessCreateConfig: Equatable {
     /// Overrides the name assigned to the bootstrap node (node 1) during self-join.
     /// When nil the default from SPKI_DEFAULT_NODE_NAMES is used.
     let bootstrapNodeName: String?
+    /// Overrides the node identity name for a single non-master node during join-one.
+    /// Does not affect machine directory resolution — the machine label from nodeNamesCSV is still
+    /// used to locate the existing machine directory created at init time.
+    let joinNodeName: String?
 
     init(
         realmName: String,
@@ -58,7 +62,8 @@ struct RealmHarnessCreateConfig: Equatable {
         harnessRoot: String? = nil,
         nodeNamesCSV: String? = nil,
         logLevel: String? = nil,
-        bootstrapNodeName: String? = nil
+        bootstrapNodeName: String? = nil,
+        joinNodeName: String? = nil
     ) {
         self.realmName = realmName
         self.host = host
@@ -67,6 +72,7 @@ struct RealmHarnessCreateConfig: Equatable {
         self.nodeNamesCSV = nodeNamesCSV
         self.logLevel = logLevel
         self.bootstrapNodeName = bootstrapNodeName
+        self.joinNodeName = joinNodeName
     }
 }
 

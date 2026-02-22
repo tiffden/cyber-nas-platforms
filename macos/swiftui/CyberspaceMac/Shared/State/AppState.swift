@@ -4,7 +4,7 @@ import Foundation
 @MainActor
 final class AppState: ObservableObject {
     // Bump this on each UI rollout so operators can verify they are on the latest binary.
-    static let uiVersion = "ui-2026.02.19-r03"
+    static let uiVersion = "ui-2026.02.22-r01"
 
     // MARK: - Harness State
 
@@ -434,6 +434,62 @@ final class AppState: ObservableObject {
             setHarnessBackendResult("error:\n\(formatError(error))")
             lastErrorMessage = formatError(error)
         }
+    }
+
+    /// Join only the nodes whose IDs appear in `nodeIDs`, using per-node name overrides where provided.
+    /// Node names are passed via SPKI_JOIN_NODE_NAME (not by modifying nodeNamesCSV) so that
+    /// machine directory resolution — which relies on the original machine labels — is unaffected.
+    func joinSelectedRealmHarnessNodes(nodeIDs: [Int], nodeNameOverrides: [Int: String] = [:]) async {
+        let requestID = makeRequestID(action: "harness.join_selected")
+        setHarnessBackendCall(command: "join-one \(nodeIDs.map(String.init).joined(separator: " "))")
+        logHarnessEvent(
+            action: "harness.join_selected",
+            result: "start",
+            requestID: requestID,
+            fields: ["node_ids": nodeIDs.map(String.init).joined(separator: ",")]
+        )
+        var outputs: [String] = []
+        let base = currentHarnessConfig
+        for nodeID in nodeIDs {
+            let joinName = nodeNameOverrides[nodeID]
+            let config = RealmHarnessCreateConfig(
+                realmName: base.realmName,
+                host: base.host,
+                port: base.port,
+                harnessRoot: base.harnessRoot,
+                nodeNamesCSV: base.nodeNamesCSV,
+                logLevel: base.logLevel,
+                joinNodeName: joinName
+            )
+            do {
+                let response = try await api.joinSingleRealmHarnessNode(
+                    nodeID: nodeID,
+                    config: config,
+                    requestID: requestID
+                )
+                if !response.output.isEmpty { outputs.append(response.output) }
+            } catch {
+                logHarnessEvent(
+                    action: "harness.join_selected",
+                    result: "error",
+                    requestID: requestID,
+                    fields: ["node_id": String(nodeID), "error": formatError(error)]
+                )
+                setHarnessBackendResult("error:\n\(formatError(error))")
+                lastErrorMessage = formatError(error)
+                return
+            }
+        }
+        harnessLaunchOutput = outputs.joined(separator: "\n")
+        await refreshRealmHarnessNodes(requestID: requestID)
+        logHarnessEvent(
+            action: "harness.join_selected",
+            result: "ok",
+            requestID: requestID,
+            fields: ["node_ids": nodeIDs.map(String.init).joined(separator: ",")]
+        )
+        setHarnessBackendResult(outputs.isEmpty ? "ok" : outputs.joined(separator: "\n"))
+        lastErrorMessage = nil
     }
 
     func vaultPut(nodeID: Int, path: String, value: String) async -> String? {

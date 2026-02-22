@@ -36,12 +36,15 @@ struct DemoWorkflowScreen: View {
     private var masterBootstrapped: Bool {
         guard let master = appState.harnessNodes.first(where: { $0.id == 1 })
                         ?? appState.harnessNodes.first else { return false }
+        // "listening" is the expected final status once the bootstrap node's listener is up.
+        // Any non-standalone status means the realm was at least partially bootstrapped.
         return master.status != "standalone"
     }
 
-    private var allNodesJoined: Bool {
+    private var allNodesListening: Bool {
         guard appState.harnessNodes.count >= appState.harnessNodeCount else { return false }
-        return appState.harnessNodes.allSatisfy { $0.status != "standalone" }
+        // All nodes reach "listening" once their TCP listener + mDNS advertisement is active.
+        return appState.harnessNodes.allSatisfy { $0.status == "listening" }
     }
 
     private var bootstrapMachineLabel: String {
@@ -63,7 +66,10 @@ struct DemoWorkflowScreen: View {
     }
 
     private var anyMachineSelected: Bool {
-        joinSelections.values.contains(true)
+        let unjoinedIDs = Set(unjoinedMachines.map(\.id))
+        return joinSelections.contains { id, isSelected in
+            isSelected && unjoinedIDs.contains(id)
+        }
     }
 
     var body: some View {
@@ -164,18 +170,20 @@ struct DemoWorkflowScreen: View {
 
                             Button("Join Realm") {
                                 Task {
-                                    let overrides = joinSelections
-                                        .filter { $0.value }
-                                        .reduce(into: [Int: String]()) { dict, pair in
-                                            if let name = joinNodeNames[pair.key], !name.isEmpty {
-                                                dict[pair.key] = name
-                                            }
-                                        }
-                                    await appState.inviteOtherRealmHarnessNodes(
-                                        nodeCount: appState.harnessNodeCount,
+                                    let unjoinedIDs = Set(unjoinedMachines.map(\.id))
+                                    let selectedIDs = joinSelections
+                                        .filter { unjoinedIDs.contains($0.key) && $0.value }
+                                        .map(\.key)
+                                        .sorted()
+                                    // Always supply a name: typed input or the "node<id>" placeholder default.
+                                    let overrides = selectedIDs.reduce(into: [Int: String]()) { dict, id in
+                                        let typed = joinNodeNames[id] ?? ""
+                                        dict[id] = typed.isEmpty ? "node\(id)" : typed
+                                    }
+                                    await appState.joinSelectedRealmHarnessNodes(
+                                        nodeIDs: selectedIDs,
                                         nodeNameOverrides: overrides
                                     )
-                                    await appState.refreshRealmHarnessNodes()
                                     await appState.refreshRealmHarnessLog(nodeID: appState.selectedHarnessNodeID)
                                 }
                             }
@@ -185,7 +193,7 @@ struct DemoWorkflowScreen: View {
 
                         // ── Machine list ────────────────────────────────
                         if unjoinedMachines.isEmpty {
-                            Text(masterBootstrapped ? "All machines have joined the realm." : "Bootstrap Realm first.")
+                            Text(masterBootstrapped ? "All machines are listening in the realm." : "Bootstrap Realm first.")
                                 .font(.caption)
                                 .foregroundStyle(.secondary)
                         } else {
@@ -266,12 +274,19 @@ struct DemoWorkflowScreen: View {
                             .foregroundStyle(.secondary)
 
                             ForEach(appState.harnessNodes) { node in
-                                let listenerUp = node.status != "standalone"
+                                let isListening = node.status == "listening"
                                 HStack {
                                     Text("#\(node.id)").frame(width: 44, alignment: .leading)
                                     Text(node.nodeName).frame(width: 120, alignment: .leading)
-                                    Text(node.status).frame(width: 100, alignment: .leading)
-                                    Text(listenerUp ? "mDNS" : "—").frame(width: 80, alignment: .leading)
+                                    HStack(spacing: 4) {
+                                        Circle()
+                                            .fill(isListening ? Color.green : Color.secondary)
+                                            .frame(width: 6, height: 6)
+                                        Text(node.status)
+                                            .foregroundStyle(isListening ? Color.green : Color.primary)
+                                    }
+                                    .frame(width: 100, alignment: .leading)
+                                    Text(isListening ? "mDNS" : "—").frame(width: 80, alignment: .leading)
                                     Text("\(node.host):\(String(node.port))").frame(width: 140, alignment: .leading)
                                     Text(node.uuid.isEmpty ? "—" : node.uuid)
                                         .frame(width: 270, alignment: .leading)
@@ -335,7 +350,7 @@ struct DemoWorkflowScreen: View {
         .onAppear {
             guard !didInitialize else { return }
             realmNameDraft = appState.harnessRealmName
-            nodeNameDraft = appState.harnessMachines.first?.machineLabel ?? ""
+            nodeNameDraft = "node1"
             didInitialize = true
         }
         .onChange(of: appState.selectedHarnessNodeID) { _, newID in

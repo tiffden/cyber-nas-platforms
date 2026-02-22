@@ -58,6 +58,20 @@ struct InProcessAPIClient: ClientAPI {
         )
     }
 
+    func joinSingleRealmHarnessNode(
+        nodeID: Int,
+        config _: RealmHarnessCreateConfig?,
+        requestID _: String?
+    ) async throws -> RealmHarnessLaunchResponse {
+        guard nodeID >= 2 else {
+            throw APIErrorPayload(code: "invalid_argument", message: "nodeID must be >= 2", details: nil)
+        }
+        return RealmHarnessLaunchResponse(
+            nodeCount: 1,
+            output: "Mock join-one: node \(nodeID) joined local realm."
+        )
+    }
+
     func launchRealmHarnessUIs(
         nodeCount: Int,
         config _: RealmHarnessCreateConfig?,

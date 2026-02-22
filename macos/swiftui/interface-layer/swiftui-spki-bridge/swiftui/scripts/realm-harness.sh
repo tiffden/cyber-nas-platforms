@@ -76,6 +76,7 @@ Commands:
   status [N]         Show realm status for each node
   self-join [N]      Join node1 to the configured realm endpoint
   join-all [N]       Join nodes 2..N to node1 (${DEFAULT_MASTER_HOST}:${DEFAULT_MASTER_PORT})
+  join-one <ID>      Join a single node by ID (ID must be >= 2)
   listen-bg [N]      Open join listener(s) for nodes 1..N in background (mDNS + TCP)
   stop-listen-bg [N] Stop background join listener(s) started by listen-bg
   vault-put <ID> <KEY> <VALUE>
@@ -152,6 +153,8 @@ node_runtime_dir() {
   local name
   if [[ "$id" == "1" ]] && [[ -n "${SPKI_BOOTSTRAP_NODE_NAME:-}" ]]; then
     name="$SPKI_BOOTSTRAP_NODE_NAME"
+  elif [[ "$id" != "1" ]] && [[ -n "${SPKI_JOIN_NODE_NAME:-}" ]]; then
+    name="$SPKI_JOIN_NODE_NAME"
   else
     name="$(resolve_node_name "$id")"
   fi
@@ -221,8 +224,11 @@ write_node_env() {
   local logdir="$runtime_root/logs"
   local node_name
   # SPKI_BOOTSTRAP_NODE_NAME overrides the default name for node 1 only (set by UI self-join).
+  # SPKI_JOIN_NODE_NAME overrides the node identity name for any non-master node being joined.
   if [[ "$id" == "1" ]] && [[ -n "${SPKI_BOOTSTRAP_NODE_NAME:-}" ]]; then
     node_name="$SPKI_BOOTSTRAP_NODE_NAME"
+  elif [[ "$id" != "1" ]] && [[ -n "${SPKI_JOIN_NODE_NAME:-}" ]]; then
+    node_name="$SPKI_JOIN_NODE_NAME"
   else
     node_name="$(resolve_node_name "$id")"
   fi
@@ -430,9 +436,10 @@ cmd_self_join() {
   load_machine_env 1
   write_node_env 1
   load_node_env 1
-  # Bootstrap machine 1 as realm master. --start-realm calls start-join-listener,
-  # which creates a membership cert and saves a realm snapshot before exiting.
-  # Subsequent --status calls restore from the snapshot and report "joined".
+  # Bootstrap machine 1 as realm master. --start-realm creates a membership cert
+  # and writes "ready" to the realm state snapshot before exiting.
+  # cmd_listen_bg below then runs --listen, which overwrites the state to "listening"
+  # — the correct final status for all realm nodes (master and joiners alike).
   echo "Bootstrapping realm ${DEFAULT_REALM_NAME} on machine 1 (${DEFAULT_MASTER_HOST}:${SPKI_NODE_PORT})"
   # Stop any existing listener before wiping node state — write_node_env (above)
   # wipes the workdir, so a stale listener would hold the wrong keypair.
@@ -464,6 +471,24 @@ cmd_join_all() {
     _start_listener_for_node "$id"
   done
   log_event "info" "harness.join_all" "ok" "nodes=${count}"
+}
+
+cmd_join_one() {
+  local id="${1:-}"
+  if [[ -z "$id" ]] || ! [[ "$id" =~ ^[0-9]+$ ]] || (( id < 2 )); then
+    echo "Usage: $(basename "$0") join-one <ID>  (ID must be >= 2)" >&2
+    exit 1
+  fi
+  log_event "info" "harness.join_one" "start" "node=${id}"
+  SPKI_DEFAULT_NODE_NAMES="${SPKI_REALM_HARNESS_NODE_NAMES:-${SPKI_DEFAULT_NODE_NAMES:-}}"
+  ensure_build
+  load_machine_env "$id"
+  write_node_env "$id"
+  load_node_env "$id"
+  echo "Joining machine ${id} (${SPKI_MACHINE_NAME}) -> ${DEFAULT_MASTER_HOST}:${DEFAULT_MASTER_PORT}"
+  run_realm_for_node "$id" --json --join --name "$SPKI_NODE_NAME" --host "$DEFAULT_MASTER_HOST" --port "$DEFAULT_MASTER_PORT"
+  _start_listener_for_node "$id"
+  log_event "info" "harness.join_one" "ok" "node=${id}"
 }
 
 cmd_ui() {
@@ -750,6 +775,7 @@ main() {
     status) cmd_status "$@" ;;
     self-join) cmd_self_join "$@" ;;
     join-all) cmd_join_all "$@" ;;
+    join-one) cmd_join_one "$@" ;;
     listen-bg) cmd_listen_bg "$@" ;;
     stop-listen-bg) cmd_stop_listen_bg "$@" ;;
     vault-put) cmd_vault_put "$@" ;;

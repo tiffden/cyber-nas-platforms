@@ -84,6 +84,26 @@ struct CLIBridgeAPIClient: ClientAPI {
         return RealmHarnessLaunchResponse(nodeCount: nodeCount, output: output.trimmingCharacters(in: .whitespacesAndNewlines))
     }
 
+    func joinSingleRealmHarnessNode(
+        nodeID: Int,
+        config: RealmHarnessCreateConfig?,
+        requestID: String?
+    ) async throws -> RealmHarnessLaunchResponse {
+        guard nodeID >= 2 else {
+            throw APIErrorPayload(code: "invalid_argument", message: "nodeID must be >= 2", details: nil)
+        }
+        let harnessScript = try resolveHarnessScript()
+        let harnessEnv = harnessEnvironment(config: config)
+        let output = try run(
+            executable: harnessScript,
+            arguments: ["join-one", String(nodeID)],
+            environment: harnessEnv,
+            requestID: requestID,
+            action: "harness.join_one"
+        )
+        return RealmHarnessLaunchResponse(nodeCount: 1, output: output.trimmingCharacters(in: .whitespacesAndNewlines))
+    }
+
     func launchRealmHarnessUIs(
         nodeCount: Int,
         config: RealmHarnessCreateConfig?,
@@ -629,6 +649,9 @@ struct CLIBridgeAPIClient: ClientAPI {
         }
         if let bootstrapNodeName = config.bootstrapNodeName, !bootstrapNodeName.isEmpty {
             merged["SPKI_BOOTSTRAP_NODE_NAME"] = bootstrapNodeName
+        }
+        if let joinNodeName = config.joinNodeName, !joinNodeName.isEmpty {
+            merged["SPKI_JOIN_NODE_NAME"] = joinNodeName
         }
         return merged
     }
