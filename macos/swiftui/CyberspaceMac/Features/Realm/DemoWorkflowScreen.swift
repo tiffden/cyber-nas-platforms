@@ -65,7 +65,32 @@ struct DemoWorkflowScreen: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
 
-            // ── 1. Realm Setup ────────────────────────────────────────────
+            // ── 1. Bootstrap Realm ────────────────────────────────────────
+            HStack {
+                Button("Bootstrap Realm (Self-Join)") {
+                    Task {
+                        appState.harnessRealmName = realmNameDraft
+                        await appState.selfJoinRealmHarness(
+                            nodeNameOverride: nodeNameDraft
+                        )
+                        // Stop here if self-join failed — preserve the error message and
+                        // avoid masking it with a spurious "Node environment file not found".
+                        guard appState.lastErrorMessage == nil else { return }
+                        await appState.refreshRealmHarnessNodes()
+                        await appState.refreshRealmHarnessLog(nodeID: appState.selectedHarnessNodeID)
+                    }
+                }
+                .buttonStyle(.borderedProminent)
+                .disabled(appState.harnessPhase == .notSetup || masterBootstrapped)
+
+                if let err = appState.lastErrorMessage {
+                    Text(err)
+                        .font(.caption)
+                        .foregroundStyle(.red)
+                }
+            }
+
+            // ── 2. Realm Setup ────────────────────────────────────────────
             GroupBox("Realm Setup") {
                 VStack(alignment: .leading, spacing: 8) {
                     if appState.harnessPhase == .notSetup {
@@ -116,49 +141,20 @@ struct DemoWorkflowScreen: View {
                             .foregroundStyle(.tertiary)
                             .padding(.leading, 4)
                     }
-
-                    HStack {
-                        Button("Bootstrap Realm (Self-Join)") {
-                            Task {
-                                appState.harnessRealmName = realmNameDraft
-                                await appState.selfJoinRealmHarness(
-                                    nodeNameOverride: nodeNameDraft
-                                )
-                                // Stop here if self-join failed — preserve the error message and
-                                // avoid masking it with a spurious "Node environment file not found".
-                                guard appState.lastErrorMessage == nil else { return }
-                                await appState.refreshRealmHarnessNodes()
-                                await appState.refreshRealmHarnessLog(nodeID: appState.selectedHarnessNodeID)
-                            }
-                        }
-                        .buttonStyle(.borderedProminent)
-                        .disabled(appState.harnessPhase == .notSetup || masterBootstrapped)
-
-                        if let err = appState.lastErrorMessage {
-                            Text(err)
-                                .font(.caption)
-                                .foregroundStyle(.red)
-                        }
-                    }
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
             }
 
-            // ── 2. Bootstrap Result ───────────────────────────────────────
-            if !appState.harnessNodes.isEmpty {
-                bootstrapResultSection()
-            }
-
-            // ── 3. Join Remaining Nodes ───────────────────────────────────
+            // ── 3. Join Remaining Machines to Realm ───────────────────────────────────
             if appState.harnessNodeCount > 1 {
                 HStack(alignment: .top, spacing: 12) {
-                    GroupBox("Join Remaining Nodes") {
+                    GroupBox("Join Remaining Machines to Realm") {
                         VStack(alignment: .leading, spacing: 6) {
                             Text("Each candidate node dials Machine 1's join listener and requests enrollment. mDNS advertisement starts automatically at that point.")
                                 .font(.caption)
                                 .foregroundStyle(.secondary)
 
-                            Button("Join Remaining Nodes") {
+                            Button("Join Remaining Machines") {
                                 Task {
                                     await appState.inviteOtherRealmHarnessNodes(nodeCount: appState.harnessNodeCount)
                                     await appState.refreshRealmHarnessNodes()
@@ -429,46 +425,6 @@ struct DemoWorkflowScreen: View {
             Text(value)
                 .font(.system(.caption, design: .monospaced))
                 .textSelection(.enabled)
-        }
-    }
-
-    // MARK: - Bootstrap Result
-
-    @ViewBuilder
-    private func bootstrapResultSection() -> some View {
-        let masterNode = appState.harnessNodes.first(where: { $0.id == 1 })
-                      ?? appState.harnessNodes[0]
-        let bootstrapped = masterNode.status != "standalone"
-
-        GroupBox("Bootstrap Result — \(masterNode.nodeName)") {
-            VStack(alignment: .leading, spacing: 4) {
-                resultRow(label: "Node identity",   active: bootstrapped,
-                          trueLabel: "created",  falseLabel: "not yet")
-                resultRow(label: "Membership cert", active: bootstrapped,
-                          trueLabel: "issued",   falseLabel: "not yet")
-                resultRow(label: "Join listener",   active: bootstrapped,
-                          trueLabel: "active",   falseLabel: "inactive")
-                resultRow(label: "Discovery",       active: bootstrapped,
-                          trueLabel: "mDNS",     falseLabel: "inactive")
-            }
-            .frame(maxWidth: .infinity, alignment: .leading)
-        }
-    }
-
-    @ViewBuilder
-    private func resultRow(label: String, active: Bool,
-                           trueLabel: String, falseLabel: String) -> some View {
-        HStack(spacing: 8) {
-            Text(active ? "✓" : "—")
-                .foregroundStyle(active ? .green : .secondary)
-                .frame(width: 16, alignment: .center)
-                .font(.system(.caption, design: .monospaced))
-            Text(label)
-                .frame(width: 140, alignment: .leading)
-                .font(.caption)
-            Text(active ? trueLabel : falseLabel)
-                .font(.system(.caption, design: .monospaced))
-                .foregroundStyle(active ? .primary : .secondary)
         }
     }
 

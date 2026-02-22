@@ -15,8 +15,6 @@ struct MachineSetupScreen: View {
     @State private var machineDrafts: [HarnessLocalMachine] = []
     @State private var didInitialize = false
     @State private var showResetConfirmation = false
-    @State private var autoRefreshLog = false
-    @State private var autoRefreshSeconds = 2
     @State private var useReadableLogLayout = true
 
     private var renderedHarnessLog: String {
@@ -62,12 +60,30 @@ struct MachineSetupScreen: View {
                             regeneratePorts(basePort: newBase)
                         }
 
-                        Text("Harness Root")
-                            .frame(width: 90, alignment: .leading)
-                        TextField("~/.cyberspace/testbed (optional override)", text: $harnessRootDraft)
-                            .textFieldStyle(.roundedBorder)
+                        VStack(alignment: .leading, spacing: 4) {
+                            HStack {
+                                Text("Harness Root")
+                                    .frame(width: 90, alignment: .leading)
+                                TextField("~/.cyberspace/testbed (harness will be created here)", text: $harnessRootDraft)
+                                    .textFieldStyle(.roundedBorder)
+                                    .disabled(appState.harnessPhase != .notSetup)
+                            }
+                            Button("Show in Finder") {
+                                let raw = harnessRootDraft.trimmingCharacters(in: .whitespacesAndNewlines)
+                                let path: String
+                                if raw.isEmpty {
+                                    path = appState.harnessPhase == .notSetup ? "~" : "~/.cyberspace/testbed"
+                                } else {
+                                    path = raw
+                                }
+                                let expanded = (path as NSString).expandingTildeInPath
+                                NSWorkspace.shared.open(URL(fileURLWithPath: expanded))
+                            }
+                            .font(.caption)
+                            .padding(.leading, 98) // align under text field (label width 90 + spacing 8)
+                            .disabled(harnessRootDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                        }
                     }
-
 
                     // Lifecycle controls
                     HStack(spacing: 10) {
@@ -87,7 +103,9 @@ struct MachineSetupScreen: View {
                                 Task {
                                     applyMachineDrafts()
                                     await appState.createRealmTestEnvironment(nodeCount: machineDrafts.count)
-                                    await appState.refreshRealmHarnessNodes()
+                                    if harnessRootDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                                        harnessRootDraft = "~/.cyberspace/testbed"
+                                    }
                                 }
                             }
                             .buttonStyle(.borderedProminent)
@@ -143,18 +161,7 @@ struct MachineSetupScreen: View {
             // ── Harness Log (fills remaining vertical space) ──────────────
             GroupBox("Harness Log") {
                 VStack(alignment: .leading, spacing: 10) {
-                    HStack {
-                        Button("Refresh") {
-                            Task { await appState.refreshHarnessSetupLog() }
-                        }
-                        Toggle("Auto-refresh every:", isOn: $autoRefreshLog)
-                        Stepper(value: $autoRefreshSeconds, in: 1...10) {
-                            Text("\(autoRefreshSeconds)s").monospacedDigit()
-                        }
-                        .frame(width: 90)
-                        .disabled(!autoRefreshLog)
-                        Toggle("Readable", isOn: $useReadableLogLayout)
-                    }
+                    Toggle("Readable", isOn: $useReadableLogLayout)
 
                     ScrollView {
                         Text(renderedHarnessLog)
@@ -172,7 +179,10 @@ struct MachineSetupScreen: View {
         }
         .onAppear {
             guard !didInitialize else { return }
-            harnessRootDraft = appState.harnessRootOverride
+            let savedRoot = appState.harnessRootOverride.trimmingCharacters(in: .whitespacesAndNewlines)
+            harnessRootDraft = (savedRoot.isEmpty && appState.harnessPhase == .running)
+                ? "~/.cyberspace/testbed"
+                : savedRoot
             if appState.harnessMachines.isEmpty {
                 machineCount = appState.harnessNodeCount
                 syncMachineDrafts(count: machineCount)
@@ -185,14 +195,6 @@ struct MachineSetupScreen: View {
                 Task { await appState.refreshHarnessSetupLog() }
             }
             didInitialize = true
-        }
-        .task(id: "\(autoRefreshLog)-\(autoRefreshSeconds)") {
-            guard autoRefreshLog else { return }
-            while autoRefreshLog, !Task.isCancelled {
-                await appState.refreshHarnessSetupLog()
-                let nanos = UInt64(autoRefreshSeconds) * 1_000_000_000
-                try? await Task.sleep(nanoseconds: nanos)
-            }
         }
         .confirmationDialog(
             "Reset will stop all running processes and delete the harness root. This cannot be undone.",
