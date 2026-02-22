@@ -78,6 +78,12 @@ Commands:
   join-all [N]       Join nodes 2..N to node1 (${DEFAULT_MASTER_HOST}:${DEFAULT_MASTER_PORT})
   listen-bg [N]      Open join listener(s) for nodes 1..N in background (mDNS + TCP)
   stop-listen-bg [N] Stop background join listener(s) started by listen-bg
+  vault-put <ID> <KEY> <VALUE>
+                    Put VALUE at KEY for node ID using that node's isolated .vault
+  vault-get <ID> <KEY>
+                    Get KEY for node ID using that node's isolated .vault
+  vault-commit <ID> [MESSAGE]
+                    Commit current vault state for node ID (MESSAGE optional)
   ui <NODE_ID>       Launch one SwiftUI instance using NODE_ID environment
   ui-all-bg [N]      Launch N SwiftUI instances in background with isolated env
   stop-all-bg [N]    Stop background SwiftUI instances started by ui-all-bg
@@ -284,7 +290,7 @@ load_node_env() {
   env_file="$(node_env_file "$id")"
   if [[ ! -f "$env_file" ]]; then
     echo "Error: node env not found: $env_file" >&2
-    echo "Run: $(basename "$0") init" >&2
+    echo "Run bootstrap first: $(basename "$0") self-join 1 (then join-all as needed)." >&2
     exit 1
   fi
   # shellcheck disable=SC1090
@@ -342,6 +348,33 @@ run_realm_for_node() {
     # All env vars (SPKI_REALM_WORKDIR, SPKI_KEY_DIR, SPKI_BIN_DIR, etc.)
     # are inherited from load_node_env above.
     "$realm_bin" "$@" \
+      > >(tee -a "$node_log") \
+      2> >(tee -a "$node_log" >&2)
+  )
+}
+
+run_vault_for_node() {
+  local id="$1"
+  shift
+  load_node_env "$id"
+  local vault_bin
+  local node_log
+  local vault_root
+  vault_bin="${SPKI_VAULT_BIN:-$(resolve_spki_bin spki_vault)}"
+  node_log="${SPKI_NODE_LOG_DIR:-$(node_runtime_dir "$id")/logs}/realm.log"
+  vault_root="${SPKI_REALM_WORKDIR}/.vault"
+  mkdir -p "$(dirname "$node_log")"
+  mkdir -p "$vault_root"
+  # spki-vault commit shells out to git add/commit from SPKI_REALM_WORKDIR (not
+  # from the vault subdirectory); ensure the node workdir is a valid git repo.
+  if [[ ! -d "${SPKI_REALM_WORKDIR}/.git" ]]; then
+    git -C "$SPKI_REALM_WORKDIR" init >/dev/null
+    git -C "$SPKI_REALM_WORKDIR" config user.name "cyberspace-harness"
+    git -C "$SPKI_REALM_WORKDIR" config user.email "harness@local"
+  fi
+  (
+    cd "$vault_root"
+    "$vault_bin" --json "$@" \
       > >(tee -a "$node_log") \
       2> >(tee -a "$node_log" >&2)
   )
@@ -648,6 +681,49 @@ cmd_env() {
   node_env_file "$id"
 }
 
+cmd_vault_put() {
+  local id="${1:-}"
+  local key="${2:-}"
+  local value="${3:-}"
+  if [[ -z "$id" || -z "$key" ]]; then
+    echo "Usage: $(basename "$0") vault-put <NODE_ID> <KEY> <VALUE>" >&2
+    exit 1
+  fi
+  SPKI_DEFAULT_NODE_NAMES="${SPKI_REALM_HARNESS_NODE_NAMES:-${SPKI_DEFAULT_NODE_NAMES:-}}"
+  log_event "info" "harness.vault_put" "start" "node=${id} key=${key}"
+  run_vault_for_node "$id" --put --key "$key" --value "$value"
+  log_event "info" "harness.vault_put" "ok" "node=${id} key=${key}"
+}
+
+cmd_vault_get() {
+  local id="${1:-}"
+  local key="${2:-}"
+  if [[ -z "$id" || -z "$key" ]]; then
+    echo "Usage: $(basename "$0") vault-get <NODE_ID> <KEY>" >&2
+    exit 1
+  fi
+  SPKI_DEFAULT_NODE_NAMES="${SPKI_REALM_HARNESS_NODE_NAMES:-${SPKI_DEFAULT_NODE_NAMES:-}}"
+  log_event "info" "harness.vault_get" "start" "node=${id} key=${key}"
+  run_vault_for_node "$id" --get --key "$key"
+  log_event "info" "harness.vault_get" "ok" "node=${id} key=${key}"
+}
+
+cmd_vault_commit() {
+  local id="${1:-}"
+  local message="${2:-}"
+  if [[ -z "$id" ]]; then
+    echo "Usage: $(basename "$0") vault-commit <NODE_ID> [MESSAGE]" >&2
+    exit 1
+  fi
+  if [[ -z "$message" ]]; then
+    message="UI vault commit node${id} $(date -u +%Y-%m-%dT%H:%M:%SZ)"
+  fi
+  SPKI_DEFAULT_NODE_NAMES="${SPKI_REALM_HARNESS_NODE_NAMES:-${SPKI_DEFAULT_NODE_NAMES:-}}"
+  log_event "info" "harness.vault_commit" "start" "node=${id} message=${message}"
+  run_vault_for_node "$id" --commit --message "$message"
+  log_event "info" "harness.vault_commit" "ok" "node=${id} message=${message}"
+}
+
 cmd_clean() {
   log_event "info" "harness.clean" "start" "root=${HARNESS_ROOT}"
   # Stop any background listeners tracked in the harness root before wiping it.
@@ -676,6 +752,9 @@ main() {
     join-all) cmd_join_all "$@" ;;
     listen-bg) cmd_listen_bg "$@" ;;
     stop-listen-bg) cmd_stop_listen_bg "$@" ;;
+    vault-put) cmd_vault_put "$@" ;;
+    vault-get) cmd_vault_get "$@" ;;
+    vault-commit) cmd_vault_commit "$@" ;;
     ui) cmd_ui "$@" ;;
     ui-all-bg) cmd_ui_all_bg "$@" ;;
     stop-all-bg) cmd_stop_all_bg "$@" ;;

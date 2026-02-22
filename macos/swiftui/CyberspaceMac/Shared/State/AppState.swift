@@ -416,6 +416,139 @@ final class AppState: ObservableObject {
         }
     }
 
+    func vaultPut(nodeID: Int, path: String, value: String) async -> String? {
+        let trimmedPath = path.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedPath.isEmpty else {
+            let msg = "Vault path is required."
+            setHarnessBackendResult("error:\n\(msg)")
+            lastErrorMessage = msg
+            return nil
+        }
+        let requestID = makeRequestID(action: "harness.vault_put")
+        let command = "\(harnessScriptCommand(subcommand: "vault-put", nodeCount: nodeID)) \(shellQuote(trimmedPath)) \(shellQuote(value))"
+        setHarnessBackendCall(command: command)
+        logHarnessEvent(
+            action: "harness.vault_put",
+            result: "start",
+            requestID: requestID,
+            fields: ["node_id": String(nodeID), "path": trimmedPath]
+        )
+        do {
+            let output = try await api.vaultPut(
+                nodeID: nodeID,
+                path: trimmedPath,
+                value: value,
+                config: currentHarnessConfig,
+                requestID: requestID
+            )
+            logHarnessEvent(
+                action: "harness.vault_put",
+                result: "ok",
+                requestID: requestID,
+                fields: ["node_id": String(nodeID), "path": trimmedPath]
+            )
+            setHarnessBackendResult(output.isEmpty ? "ok: vault put complete" : output)
+            lastErrorMessage = nil
+            await refreshRealmHarnessLog(nodeID: nodeID, requestID: requestID)
+            return output
+        } catch {
+            logHarnessEvent(
+                action: "harness.vault_put",
+                result: "error",
+                requestID: requestID,
+                fields: ["node_id": String(nodeID), "path": trimmedPath, "error": formatError(error)]
+            )
+            setHarnessBackendResult("error:\n\(formatError(error))")
+            lastErrorMessage = formatError(error)
+            return nil
+        }
+    }
+
+    func vaultGet(nodeID: Int, path: String) async -> String? {
+        let trimmedPath = path.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedPath.isEmpty else {
+            let msg = "Vault path is required."
+            setHarnessBackendResult("error:\n\(msg)")
+            lastErrorMessage = msg
+            return nil
+        }
+        let requestID = makeRequestID(action: "harness.vault_get")
+        let command = "\(harnessScriptCommand(subcommand: "vault-get", nodeCount: nodeID)) \(shellQuote(trimmedPath))"
+        setHarnessBackendCall(command: command)
+        logHarnessEvent(
+            action: "harness.vault_get",
+            result: "start",
+            requestID: requestID,
+            fields: ["node_id": String(nodeID), "path": trimmedPath]
+        )
+        do {
+            let output = try await api.vaultGet(
+                nodeID: nodeID,
+                path: trimmedPath,
+                config: currentHarnessConfig,
+                requestID: requestID
+            )
+            logHarnessEvent(
+                action: "harness.vault_get",
+                result: "ok",
+                requestID: requestID,
+                fields: ["node_id": String(nodeID), "path": trimmedPath]
+            )
+            setHarnessBackendResult(output.isEmpty ? "ok: vault get complete" : output)
+            lastErrorMessage = nil
+            await refreshRealmHarnessLog(nodeID: nodeID, requestID: requestID)
+            return output
+        } catch {
+            logHarnessEvent(
+                action: "harness.vault_get",
+                result: "error",
+                requestID: requestID,
+                fields: ["node_id": String(nodeID), "path": trimmedPath, "error": formatError(error)]
+            )
+            setHarnessBackendResult("error:\n\(formatError(error))")
+            lastErrorMessage = formatError(error)
+            return nil
+        }
+    }
+
+    func vaultCommit(nodeID: Int) async -> String? {
+        let requestID = makeRequestID(action: "harness.vault_commit")
+        setHarnessBackendCall(command: harnessScriptCommand(subcommand: "vault-commit", nodeCount: nodeID))
+        logHarnessEvent(
+            action: "harness.vault_commit",
+            result: "start",
+            requestID: requestID,
+            fields: ["node_id": String(nodeID)]
+        )
+        do {
+            let output = try await api.vaultCommit(
+                nodeID: nodeID,
+                config: currentHarnessConfig,
+                requestID: requestID
+            )
+            logHarnessEvent(
+                action: "harness.vault_commit",
+                result: "ok",
+                requestID: requestID,
+                fields: ["node_id": String(nodeID)]
+            )
+            setHarnessBackendResult(output.isEmpty ? "ok: vault commit complete" : output)
+            lastErrorMessage = nil
+            await refreshRealmHarnessLog(nodeID: nodeID, requestID: requestID)
+            return output
+        } catch {
+            logHarnessEvent(
+                action: "harness.vault_commit",
+                result: "error",
+                requestID: requestID,
+                fields: ["node_id": String(nodeID), "error": formatError(error)]
+            )
+            setHarnessBackendResult("error:\n\(formatError(error))")
+            lastErrorMessage = formatError(error)
+            return nil
+        }
+    }
+
     func resetRealmHarness() async {
         let requestID = makeRequestID(action: "harness.reset")
         let config = currentHarnessConfig

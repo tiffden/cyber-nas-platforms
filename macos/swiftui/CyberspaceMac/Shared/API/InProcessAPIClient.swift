@@ -135,4 +135,40 @@ struct InProcessAPIClient: ClientAPI {
     ) async throws -> String {
         return "[mock realm log] \(nodes.count) nodes, maxLines=\(maxLines) — no harness process in in-process mode."
     }
+
+    func vaultPut(
+        nodeID: Int,
+        path: String,
+        value: String,
+        config _: RealmHarnessCreateConfig?,
+        requestID _: String?
+    ) async throws -> String {
+        guard nodeID > 0 else {
+            throw APIErrorPayload(code: "invalid_argument", message: "nodeID must be > 0", details: nil)
+        }
+        return "[mock vault put] node=\(nodeID) path=\(path) value=\(value)"
+    }
+
+    func vaultGet(
+        nodeID: Int,
+        path: String,
+        config _: RealmHarnessCreateConfig?,
+        requestID _: String?
+    ) async throws -> String {
+        guard nodeID > 0 else {
+            throw APIErrorPayload(code: "invalid_argument", message: "nodeID must be > 0", details: nil)
+        }
+        return "[mock vault get] node=\(nodeID) path=\(path)"
+    }
+
+    func vaultCommit(
+        nodeID: Int,
+        config _: RealmHarnessCreateConfig?,
+        requestID _: String?
+    ) async throws -> String {
+        guard nodeID > 0 else {
+            throw APIErrorPayload(code: "invalid_argument", message: "nodeID must be > 0", details: nil)
+        }
+        return "[mock vault commit] node=\(nodeID)"
+    }
 }

@@ -194,6 +194,77 @@ struct CLIBridgeAPIClient: ClientAPI {
         return RealmHarnessLaunchResponse(nodeCount: 0, output: output.trimmingCharacters(in: .whitespacesAndNewlines))
     }
 
+    func vaultPut(
+        nodeID: Int,
+        path: String,
+        value: String,
+        config: RealmHarnessCreateConfig?,
+        requestID: String?
+    ) async throws -> String {
+        guard nodeID > 0 else {
+            throw APIErrorPayload(code: "invalid_argument", message: "nodeID must be > 0", details: nil)
+        }
+        let trimmedPath = path.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedPath.isEmpty else {
+            throw APIErrorPayload(code: "invalid_argument", message: "vault path must not be empty", details: nil)
+        }
+        let harnessScript = try resolveHarnessScript()
+        let harnessEnv = harnessEnvironment(config: config)
+        let output = try run(
+            executable: harnessScript,
+            arguments: ["vault-put", String(nodeID), trimmedPath, value],
+            environment: harnessEnv,
+            requestID: requestID,
+            action: "harness.vault_put"
+        )
+        return output.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    func vaultGet(
+        nodeID: Int,
+        path: String,
+        config: RealmHarnessCreateConfig?,
+        requestID: String?
+    ) async throws -> String {
+        guard nodeID > 0 else {
+            throw APIErrorPayload(code: "invalid_argument", message: "nodeID must be > 0", details: nil)
+        }
+        let trimmedPath = path.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedPath.isEmpty else {
+            throw APIErrorPayload(code: "invalid_argument", message: "vault path must not be empty", details: nil)
+        }
+        let harnessScript = try resolveHarnessScript()
+        let harnessEnv = harnessEnvironment(config: config)
+        let output = try run(
+            executable: harnessScript,
+            arguments: ["vault-get", String(nodeID), trimmedPath],
+            environment: harnessEnv,
+            requestID: requestID,
+            action: "harness.vault_get"
+        )
+        return output.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    func vaultCommit(
+        nodeID: Int,
+        config: RealmHarnessCreateConfig?,
+        requestID: String?
+    ) async throws -> String {
+        guard nodeID > 0 else {
+            throw APIErrorPayload(code: "invalid_argument", message: "nodeID must be > 0", details: nil)
+        }
+        let harnessScript = try resolveHarnessScript()
+        let harnessEnv = harnessEnvironment(config: config)
+        let output = try run(
+            executable: harnessScript,
+            arguments: ["vault-commit", String(nodeID)],
+            environment: harnessEnv,
+            requestID: requestID,
+            action: "harness.vault_commit"
+        )
+        return output.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
     func realmHarnessNodes(
         nodeCount: Int,
         config: RealmHarnessCreateConfig?,

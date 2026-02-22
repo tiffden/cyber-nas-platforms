@@ -11,6 +11,9 @@ protocol ClientAPI {
     func realmHarnessLog(maxLines: Int, config: RealmHarnessCreateConfig?, requestID: String?) async throws -> String
     func realmHarnessAllNodesLog(nodes: [RealmHarnessNodeMetadata], maxLines: Int, config: RealmHarnessCreateConfig?, requestID: String?) async throws -> String
     func cleanRealmHarness(config: RealmHarnessCreateConfig?, requestID: String?) async throws -> RealmHarnessLaunchResponse
+    func vaultPut(nodeID: Int, path: String, value: String, config: RealmHarnessCreateConfig?, requestID: String?) async throws -> String
+    func vaultGet(nodeID: Int, path: String, config: RealmHarnessCreateConfig?, requestID: String?) async throws -> String
+    func vaultCommit(nodeID: Int, config: RealmHarnessCreateConfig?, requestID: String?) async throws -> String
 }
 
 extension ClientAPI {
@@ -52,5 +55,17 @@ extension ClientAPI {
 
     func cleanRealmHarness() async throws -> RealmHarnessLaunchResponse {
         try await cleanRealmHarness(config: nil, requestID: nil)
+    }
+
+    func vaultPut(nodeID: Int, path: String, value: String) async throws -> String {
+        try await vaultPut(nodeID: nodeID, path: path, value: value, config: nil, requestID: nil)
+    }
+
+    func vaultGet(nodeID: Int, path: String) async throws -> String {
+        try await vaultGet(nodeID: nodeID, path: path, config: nil, requestID: nil)
+    }
+
+    func vaultCommit(nodeID: Int) async throws -> String {
+        try await vaultCommit(nodeID: nodeID, config: nil, requestID: nil)
     }
 }
