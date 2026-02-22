@@ -13,13 +13,9 @@ struct DemoWorkflowScreen: View {
     @State private var autoRefreshLog = false
     @State private var autoRefreshSeconds = 2
     @State private var useReadableLogLayout = true
-    @State private var vaultPathDraft = ".vault/demo.txt"
-    @State private var vaultValueDraft = "hello-realm"
-    @State private var didRunVaultPut = false
-    @State private var didRunVaultGet = false
-    @State private var vaultActionStatus = "Run Vault Put, then Get, then Commit."
-    @State private var isVaultActionRunning = false
     @State private var didInitialize = false
+    @State private var joinSelections: [Int: Bool] = [:]
+    @State private var joinNodeNames: [Int: String] = [:]
 
     private var renderedHarnessLog: String {
         let raw = appState.harnessCurrentLog
@@ -58,8 +54,16 @@ struct DemoWorkflowScreen: View {
         return "Machine 1 (not yet configured)"
     }
 
-    private var vaultTargetNodeID: Int {
-        appState.selectedHarnessNodeID > 0 ? appState.selectedHarnessNodeID : 1
+    private var unjoinedMachines: [HarnessLocalMachine] {
+        appState.harnessMachines.filter { machine in
+            guard machine.id != 1 else { return false }
+            let node = appState.harnessNodes.first(where: { $0.id == machine.id })
+            return node == nil || node?.status == "standalone"
+        }
+    }
+
+    private var anyMachineSelected: Bool {
+        joinSelections.values.contains(true)
     }
 
     var body: some View {
@@ -147,143 +151,91 @@ struct DemoWorkflowScreen: View {
 
             // ── 3. Join Remaining Machines to Realm ───────────────────────────────────
             if appState.harnessNodeCount > 1 {
-                HStack(alignment: .top, spacing: 12) {
-                    GroupBox("Join Remaining Machines to Realm") {
-                        VStack(alignment: .leading, spacing: 6) {
-                            Text("Each candidate node dials Machine 1's join listener and requests enrollment. mDNS advertisement starts automatically at that point.")
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
+                GroupBox("Join Remaining Machines to Realm") {
+                    VStack(alignment: .leading, spacing: 8) {
+                        // ── Action buttons ──────────────────────────────
+                        HStack(spacing: 8) {
+                            Button("Select All") {
+                                for machine in unjoinedMachines {
+                                    joinSelections[machine.id] = true
+                                }
+                            }
+                            .disabled(unjoinedMachines.isEmpty)
 
-                            Button("Join Remaining Machines") {
+                            Button("Join Realm") {
                                 Task {
-                                    await appState.inviteOtherRealmHarnessNodes(nodeCount: appState.harnessNodeCount)
+                                    let overrides = joinSelections
+                                        .filter { $0.value }
+                                        .reduce(into: [Int: String]()) { dict, pair in
+                                            if let name = joinNodeNames[pair.key], !name.isEmpty {
+                                                dict[pair.key] = name
+                                            }
+                                        }
+                                    await appState.inviteOtherRealmHarnessNodes(
+                                        nodeCount: appState.harnessNodeCount,
+                                        nodeNameOverrides: overrides
+                                    )
                                     await appState.refreshRealmHarnessNodes()
                                     await appState.refreshRealmHarnessLog(nodeID: appState.selectedHarnessNodeID)
                                 }
                             }
                             .buttonStyle(.borderedProminent)
-                            .disabled(!masterBootstrapped || allNodesJoined)
+                            .disabled(!masterBootstrapped || !anyMachineSelected)
                         }
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                    }
-                    .frame(maxWidth: .infinity, alignment: .topLeading)
 
-                    GroupBox("Use Vaults") {
-                        VStack(alignment: .leading, spacing: 8) {
-                            Text("Validation flow: Put -> Get -> Commit. Buttons are intentionally gated to verify sequence and node readiness.")
+                        // ── Machine list ────────────────────────────────
+                        if unjoinedMachines.isEmpty {
+                            Text(masterBootstrapped ? "All machines have joined the realm." : "Bootstrap Realm first.")
                                 .font(.caption)
                                 .foregroundStyle(.secondary)
+                        } else {
+                            HStack(spacing: 0) {
+                                Text("").frame(width: 24)
+                                Text("#").frame(width: 36, alignment: .leading)
+                                Text("Machine").frame(width: 110, alignment: .leading)
+                                Text("Node Name").frame(maxWidth: .infinity, alignment: .leading)
+                            }
+                            .font(.caption.weight(.semibold))
+                            .foregroundStyle(.secondary)
 
-                            HStack {
-                                Text("Node")
-                                    .frame(width: 56, alignment: .leading)
-                                Text("node \(vaultTargetNodeID)")
+                            ForEach(unjoinedMachines) { machine in
+                                HStack(spacing: 0) {
+                                    Toggle("", isOn: Binding(
+                                        get: { joinSelections[machine.id] ?? false },
+                                        set: { joinSelections[machine.id] = $0 }
+                                    ))
+                                    .toggleStyle(.checkbox)
+                                    .labelsHidden()
+                                    .frame(width: 24)
+
+                                    Text("#\(machine.id)")
+                                        .frame(width: 36, alignment: .leading)
+                                        .font(.system(.caption, design: .monospaced))
+
+                                    Text(machine.machineLabel)
+                                        .frame(width: 110, alignment: .leading)
+                                        .font(.system(.caption, design: .monospaced))
+
+                                    TextField("node\(machine.id)", text: Binding(
+                                        get: { joinNodeNames[machine.id] ?? "" },
+                                        set: { joinNodeNames[machine.id] = $0 }
+                                    ))
+                                    .textFieldStyle(.roundedBorder)
                                     .font(.system(.caption, design: .monospaced))
-                                    .foregroundStyle(.secondary)
-                                if appState.selectedHarnessNodeID == 0 {
-                                    Text("(using node 1 from Realm view)")
-                                        .font(.caption2)
-                                        .foregroundStyle(.tertiary)
                                 }
                             }
-
-                            HStack {
-                                Text("Path")
-                                    .frame(width: 56, alignment: .leading)
-                                TextField(".vault/demo.txt", text: $vaultPathDraft)
-                                    .textFieldStyle(.roundedBorder)
-                            }
-
-                            HStack {
-                                Text("Value")
-                                    .frame(width: 56, alignment: .leading)
-                                TextField("hello-realm", text: $vaultValueDraft)
-                                    .textFieldStyle(.roundedBorder)
-                            }
-
-                            HStack(spacing: 8) {
-                                Button("Vault Put") {
-                                    Task {
-                                        isVaultActionRunning = true
-                                        let out = await appState.vaultPut(
-                                            nodeID: vaultTargetNodeID,
-                                            path: vaultPathDraft,
-                                            value: vaultValueDraft
-                                        )
-                                        if appState.lastErrorMessage == nil {
-                                            didRunVaultPut = true
-                                            didRunVaultGet = false
-                                            vaultActionStatus = out?.isEmpty == false
-                                                ? out!
-                                                : "Vault Put completed for node \(vaultTargetNodeID): \(vaultPathDraft)"
-                                        } else {
-                                            didRunVaultPut = false
-                                            didRunVaultGet = false
-                                            vaultActionStatus = appState.lastErrorMessage ?? "Vault Put failed."
-                                        }
-                                        isVaultActionRunning = false
-                                    }
-                                }
-                                .buttonStyle(.borderedProminent)
-                                .disabled(!allNodesJoined || isVaultActionRunning || vaultPathDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-
-                                Button("Vault Get") {
-                                    Task {
-                                        isVaultActionRunning = true
-                                        let out = await appState.vaultGet(
-                                            nodeID: vaultTargetNodeID,
-                                            path: vaultPathDraft
-                                        )
-                                        if appState.lastErrorMessage == nil {
-                                            didRunVaultGet = true
-                                            vaultActionStatus = out?.isEmpty == false
-                                                ? out!
-                                                : "Vault Get completed for node \(vaultTargetNodeID): \(vaultPathDraft)"
-                                        } else {
-                                            didRunVaultGet = false
-                                            vaultActionStatus = appState.lastErrorMessage ?? "Vault Get failed."
-                                        }
-                                        isVaultActionRunning = false
-                                    }
-                                }
-                                .buttonStyle(.bordered)
-                                .disabled(!allNodesJoined || isVaultActionRunning || !didRunVaultPut)
-
-                                Button("Vault Commit") {
-                                    Task {
-                                        isVaultActionRunning = true
-                                        let out = await appState.vaultCommit(nodeID: vaultTargetNodeID)
-                                        if appState.lastErrorMessage == nil {
-                                            vaultActionStatus = out?.isEmpty == false
-                                                ? out!
-                                                : "Vault Commit completed for node \(vaultTargetNodeID)."
-                                        } else {
-                                            vaultActionStatus = appState.lastErrorMessage ?? "Vault Commit failed."
-                                        }
-                                        isVaultActionRunning = false
-                                    }
-                                }
-                                .buttonStyle(.bordered)
-                                .disabled(!allNodesJoined || isVaultActionRunning || !didRunVaultGet)
-                            }
-
-                            Text(vaultActionStatus)
-                                .font(.caption2)
-                                .foregroundStyle(.secondary)
-                                .textSelection(.enabled)
                         }
-                        .frame(maxWidth: .infinity, alignment: .leading)
                     }
-                    .frame(maxWidth: .infinity, alignment: .topLeading)
+                    .frame(maxWidth: .infinity, alignment: .leading)
                 }
             }
 
-            // ── 3.5. Realm Status ─────────────────────────────────────────
+            // ── 4. Realm Status ───────────────────────────────────────────
             if !appState.harnessNodes.isEmpty {
                 realmStatusSection()
             }
 
-            // ── 4. Node Status ────────────────────────────────────────────
+            // ── 5. Node Status ────────────────────────────────────────────
             GroupBox(appState.harnessRealmName.isEmpty
                         ? "Node Status"
                         : "Node Status for Realm \(appState.harnessRealmName)") {
@@ -333,7 +285,7 @@ struct DemoWorkflowScreen: View {
                 }
             }
 
-            // ── 5. Node Log (fills remaining vertical space) ──────────────
+            // ── 6. Node Log (fills remaining vertical space) ──────────────
             GroupBox("Node Log") {
                 VStack(alignment: .leading, spacing: 10) {
                     HStack {
@@ -504,5 +456,155 @@ struct DemoWorkflowScreen: View {
         f.locale = Locale(identifier: "en_US_POSIX")
         f.dateFormat = "HH:mm:ss.SSS"
         return f.string(from: date)
+    }
+}
+
+// MARK: - Demo Vaults Tab
+
+struct DemoVaultsView: View {
+    @EnvironmentObject private var appState: AppState
+
+    @State private var vaultPathDraft = ".vault/demo.txt"
+    @State private var vaultValueDraft = "hello-realm"
+    @State private var didRunVaultPut = false
+    @State private var didRunVaultGet = false
+    @State private var vaultActionStatus = "Run Vault Put, then Get, then Commit."
+    @State private var isVaultActionRunning = false
+
+    private var vaultTargetNodeID: Int {
+        appState.selectedHarnessNodeID > 0 ? appState.selectedHarnessNodeID : 1
+    }
+
+    private var realmBootstrapped: Bool {
+        appState.harnessNodes.contains(where: { $0.status != "standalone" })
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            if !realmBootstrapped {
+                HStack(spacing: 6) {
+                    Image(systemName: "exclamationmark.triangle.fill")
+                        .foregroundStyle(.orange)
+                        .imageScale(.small)
+                    Text("Bootstrap a realm in Demo Workflow first.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+            }
+
+            GroupBox("Vault Target") {
+                VStack(alignment: .leading, spacing: 8) {
+                    HStack {
+                        Text("Node")
+                            .frame(width: 56, alignment: .leading)
+                        Picker("", selection: $appState.selectedHarnessNodeID) {
+                            Text("Node 1 (default)").tag(0)
+                            ForEach(appState.harnessNodes) { node in
+                                Text("Node \(node.id) (\(node.nodeName))").tag(node.id)
+                            }
+                        }
+                        .pickerStyle(.menu)
+                        .frame(width: 200)
+                    }
+
+                    HStack {
+                        Text("Path")
+                            .frame(width: 56, alignment: .leading)
+                        TextField(".vault/demo.txt", text: $vaultPathDraft)
+                            .textFieldStyle(.roundedBorder)
+                    }
+
+                    HStack {
+                        Text("Value")
+                            .frame(width: 56, alignment: .leading)
+                        TextField("hello-realm", text: $vaultValueDraft)
+                            .textFieldStyle(.roundedBorder)
+                    }
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+            }
+
+            GroupBox("Actions") {
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("Validation flow: Put → Get → Commit. Buttons are gated to verify sequence and node readiness.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+
+                    HStack(spacing: 8) {
+                        Button("Vault Put") {
+                            Task {
+                                isVaultActionRunning = true
+                                let out = await appState.vaultPut(
+                                    nodeID: vaultTargetNodeID,
+                                    path: vaultPathDraft,
+                                    value: vaultValueDraft
+                                )
+                                if appState.lastErrorMessage == nil {
+                                    didRunVaultPut = true
+                                    didRunVaultGet = false
+                                    vaultActionStatus = out?.isEmpty == false
+                                        ? out!
+                                        : "Vault Put completed for node \(vaultTargetNodeID): \(vaultPathDraft)"
+                                } else {
+                                    didRunVaultPut = false
+                                    didRunVaultGet = false
+                                    vaultActionStatus = appState.lastErrorMessage ?? "Vault Put failed."
+                                }
+                                isVaultActionRunning = false
+                            }
+                        }
+                        .buttonStyle(.borderedProminent)
+                        .disabled(!realmBootstrapped || isVaultActionRunning || vaultPathDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+
+                        Button("Vault Get") {
+                            Task {
+                                isVaultActionRunning = true
+                                let out = await appState.vaultGet(
+                                    nodeID: vaultTargetNodeID,
+                                    path: vaultPathDraft
+                                )
+                                if appState.lastErrorMessage == nil {
+                                    didRunVaultGet = true
+                                    vaultActionStatus = out?.isEmpty == false
+                                        ? out!
+                                        : "Vault Get completed for node \(vaultTargetNodeID): \(vaultPathDraft)"
+                                } else {
+                                    didRunVaultGet = false
+                                    vaultActionStatus = appState.lastErrorMessage ?? "Vault Get failed."
+                                }
+                                isVaultActionRunning = false
+                            }
+                        }
+                        .buttonStyle(.bordered)
+                        .disabled(!realmBootstrapped || isVaultActionRunning || !didRunVaultPut)
+
+                        Button("Vault Commit") {
+                            Task {
+                                isVaultActionRunning = true
+                                let out = await appState.vaultCommit(nodeID: vaultTargetNodeID)
+                                if appState.lastErrorMessage == nil {
+                                    vaultActionStatus = out?.isEmpty == false
+                                        ? out!
+                                        : "Vault Commit completed for node \(vaultTargetNodeID)."
+                                } else {
+                                    vaultActionStatus = appState.lastErrorMessage ?? "Vault Commit failed."
+                                }
+                                isVaultActionRunning = false
+                            }
+                        }
+                        .buttonStyle(.bordered)
+                        .disabled(!realmBootstrapped || isVaultActionRunning || !didRunVaultGet)
+                    }
+
+                    Text(vaultActionStatus)
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                        .textSelection(.enabled)
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+            }
+
+            Spacer()
+        }
     }
 }

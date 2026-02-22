@@ -3,9 +3,10 @@ import AppKit
 
 /// Top-level container for the Local Harness builder UI.
 ///
-/// Switches between the two phases of a local testbed session:
+/// Switches between the phases of a local testbed session:
 /// - Machine Setup: create isolated machine environments (no realm state yet)
 /// - Demo Workflow: bootstrap realm, join nodes, observe status and logs
+/// - Demo Vaults: exercise vault put/get/commit once the realm exists
 struct LocalHarnessScreen: View {
     @EnvironmentObject private var appState: AppState
     @State private var activeTab: HarnessTab = .machineSetup
@@ -13,6 +14,7 @@ struct LocalHarnessScreen: View {
     private enum HarnessTab: String, CaseIterable {
         case machineSetup = "Machine Setup"
         case demoWorkflow = "Demo Workflow"
+        case demoVaults   = "Demo Vaults"
     }
 
     var body: some View {
@@ -32,11 +34,12 @@ struct LocalHarnessScreen: View {
                 }
             }
             .pickerStyle(.segmented)
-            .frame(maxWidth: 280)
+            .frame(maxWidth: 420)
 
             switch activeTab {
             case .machineSetup: MachineSetupScreen()
             case .demoWorkflow: DemoWorkflowScreen()
+            case .demoVaults:   DemoVaultsView()
             }
         }
         .padding()

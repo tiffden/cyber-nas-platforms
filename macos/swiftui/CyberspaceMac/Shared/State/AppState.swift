@@ -379,7 +379,7 @@ final class AppState: ObservableObject {
         }
     }
 
-    func inviteOtherRealmHarnessNodes(nodeCount: Int) async {
+    func inviteOtherRealmHarnessNodes(nodeCount: Int, nodeNameOverrides: [Int: String] = [:]) async {
         let requestID = makeRequestID(action: "harness.join_all")
         setHarnessBackendCall(command: harnessScriptCommand(subcommand: "join-all", nodeCount: nodeCount))
         logHarnessEvent(
@@ -389,9 +389,29 @@ final class AppState: ObservableObject {
             fields: ["node_count": String(nodeCount)]
         )
         do {
+            let base = currentHarnessConfig
+            let config: RealmHarnessCreateConfig
+            if !nodeNameOverrides.isEmpty, !harnessMachines.isEmpty {
+                let names = harnessMachines.map { machine -> String in
+                    if let override = nodeNameOverrides[machine.id], !override.isEmpty {
+                        return override
+                    }
+                    return machine.machineLabel
+                }.joined(separator: ",")
+                config = RealmHarnessCreateConfig(
+                    realmName: base.realmName,
+                    host: base.host,
+                    port: base.port,
+                    harnessRoot: base.harnessRoot,
+                    nodeNamesCSV: names.isEmpty ? nil : names,
+                    logLevel: base.logLevel
+                )
+            } else {
+                config = base
+            }
             let response = try await api.inviteOtherRealmHarnessNodes(
                 nodeCount: nodeCount,
-                config: currentHarnessConfig,
+                config: config,
                 requestID: requestID
             )
             harnessLaunchOutput = response.output
