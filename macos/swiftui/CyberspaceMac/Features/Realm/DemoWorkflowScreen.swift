@@ -75,32 +75,7 @@ struct DemoWorkflowScreen: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
 
-            // ── 1. Bootstrap Realm ────────────────────────────────────────
-            HStack {
-                Button("Bootstrap Realm (Self-Join)") {
-                    Task {
-                        appState.harnessRealmName = realmNameDraft
-                        await appState.selfJoinRealmHarness(
-                            nodeNameOverride: nodeNameDraft
-                        )
-                        // Stop here if self-join failed — preserve the error message and
-                        // avoid masking it with a spurious "Node environment file not found".
-                        guard appState.lastErrorMessage == nil else { return }
-                        await appState.refreshRealmHarnessNodes()
-                        await appState.refreshRealmHarnessLog(nodeID: appState.selectedHarnessNodeID)
-                    }
-                }
-                .buttonStyle(.borderedProminent)
-                .disabled(appState.harnessPhase == .notSetup || masterBootstrapped)
-
-                if let err = appState.lastErrorMessage {
-                    Text(err)
-                        .font(.caption)
-                        .foregroundStyle(.red)
-                }
-            }
-
-            // ── 2. Realm Setup ────────────────────────────────────────────
+            // ── 1. Realm Setup ────────────────────────────────────────────
             GroupBox("Realm Setup") {
                 VStack(alignment: .leading, spacing: 8) {
                     if appState.harnessPhase == .notSetup {
@@ -151,6 +126,30 @@ struct DemoWorkflowScreen: View {
                             .foregroundStyle(.tertiary)
                             .padding(.leading, 4)
                     }
+
+                    HStack {
+                        Button("Bootstrap Realm (Self-Join)") {
+                            Task {
+                                appState.harnessRealmName = realmNameDraft
+                                await appState.selfJoinRealmHarness(
+                                    nodeNameOverride: nodeNameDraft
+                                )
+                                // Stop here if self-join failed — preserve the error message and
+                                // avoid masking it with a spurious "Node environment file not found".
+                                guard appState.lastErrorMessage == nil else { return }
+                                await appState.refreshRealmHarnessNodes()
+                                await appState.refreshRealmHarnessLog(nodeID: appState.selectedHarnessNodeID)
+                            }
+                        }
+                        .buttonStyle(.borderedProminent)
+                        .disabled(appState.harnessPhase == .notSetup || masterBootstrapped)
+
+                        if let err = appState.lastErrorMessage {
+                            Text(err)
+                                .font(.caption)
+                                .foregroundStyle(.red)
+                        }
+                    }
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
             }
@@ -166,7 +165,7 @@ struct DemoWorkflowScreen: View {
                                     joinSelections[machine.id] = true
                                 }
                             }
-                            .disabled(unjoinedMachines.isEmpty)
+                            .disabled(!masterBootstrapped || unjoinedMachines.isEmpty)
 
                             Button("Join Realm") {
                                 Task {
@@ -215,6 +214,7 @@ struct DemoWorkflowScreen: View {
                                     .toggleStyle(.checkbox)
                                     .labelsHidden()
                                     .frame(width: 24)
+                                    .disabled(!masterBootstrapped)
 
                                     Text("#\(machine.id)")
                                         .frame(width: 36, alignment: .leading)
