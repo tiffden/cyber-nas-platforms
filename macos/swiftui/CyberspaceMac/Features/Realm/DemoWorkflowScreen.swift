@@ -36,14 +36,14 @@ struct DemoWorkflowScreen: View {
     private var masterBootstrapped: Bool {
         guard let master = appState.harnessNodes.first(where: { $0.id == 1 })
                         ?? appState.harnessNodes.first else { return false }
-        // "listening" is the expected final status once the bootstrap node's listener is up.
-        // Any non-standalone status means the realm was at least partially bootstrapped.
+        // Bootstrap is considered complete once node 1 leaves "standalone".
+        // Depending on listener state, status may be "joined" or "listening".
         return master.status != "standalone"
     }
 
     private var allNodesListening: Bool {
         guard appState.harnessNodes.count >= appState.harnessNodeCount else { return false }
-        // All nodes reach "listening" once their TCP listener + mDNS advertisement is active.
+        // Strict check: every node must advertise a listener (TCP + mDNS) as "listening".
         return appState.harnessNodes.allSatisfy { $0.status == "listening" }
     }
 
@@ -61,6 +61,7 @@ struct DemoWorkflowScreen: View {
         appState.harnessMachines.filter { machine in
             guard machine.id != 1 else { return false }
             let node = appState.harnessNodes.first(where: { $0.id == machine.id })
+            // Treat only "standalone" (or missing) rows as eligible for join action.
             return node == nil || node?.status == "standalone"
         }
     }
@@ -471,208 +472,5 @@ struct DemoWorkflowScreen: View {
         f.locale = Locale(identifier: "en_US_POSIX")
         f.dateFormat = "HH:mm:ss.SSS"
         return f.string(from: date)
-    }
-}
-
-// MARK: - Demo Vaults Tab
-
-struct DemoVaultsView: View {
-    @EnvironmentObject private var appState: AppState
-
-    @State private var sealCommitMessage = "Seal demo content update"
-    @State private var releaseVersion = "1.0.0"
-    @State private var releaseMessage = "Demo sealed release"
-    @State private var archiveFormat = "tarball"
-    @State private var didSealCommit = false
-    @State private var didSealRelease = false
-    @State private var didSealVerify = false
-    @State private var sealActionStatus = "Run seal-commit, then seal-release, then seal-verify, then seal-archive."
-    @State private var isSealActionRunning = false
-
-    private var vaultTargetNodeID: Int {
-        appState.selectedHarnessNodeID > 0 ? appState.selectedHarnessNodeID : 1
-    }
-
-    private var realmBootstrapped: Bool {
-        appState.harnessNodes.contains(where: { $0.status != "standalone" })
-    }
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            if !realmBootstrapped {
-                HStack(spacing: 6) {
-                    Image(systemName: "exclamationmark.triangle.fill")
-                        .foregroundStyle(.orange)
-                        .imageScale(.small)
-                    Text("Bootstrap a realm in Demo Workflow first.")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                }
-            }
-
-            GroupBox("Vault Target") {
-                VStack(alignment: .leading, spacing: 8) {
-                    HStack {
-                        Text("Node")
-                            .frame(width: 56, alignment: .leading)
-                        Picker("", selection: $appState.selectedHarnessNodeID) {
-                            Text("Node 1 (default)").tag(0)
-                            ForEach(appState.harnessNodes) { node in
-                                Text("Node \(node.id) (\(node.nodeName))").tag(node.id)
-                            }
-                        }
-                        .pickerStyle(.menu)
-                        .frame(width: 200)
-                    }
-
-                    HStack {
-                        Text("Commit")
-                            .frame(width: 56, alignment: .leading)
-                        TextField("Seal commit message", text: $sealCommitMessage)
-                            .textFieldStyle(.roundedBorder)
-                    }
-
-                    HStack {
-                        Text("Release")
-                            .frame(width: 56, alignment: .leading)
-                        TextField("1.0.0", text: $releaseVersion)
-                            .textFieldStyle(.roundedBorder)
-                    }
-
-                    HStack {
-                        Text("Message")
-                            .frame(width: 56, alignment: .leading)
-                        TextField("Release message", text: $releaseMessage)
-                            .textFieldStyle(.roundedBorder)
-                    }
-
-                    HStack {
-                        Text("Archive")
-                            .frame(width: 56, alignment: .leading)
-                        Picker("", selection: $archiveFormat) {
-                            Text("zstd-age").tag("zstd-age")
-                            Text("bundle").tag("bundle")
-                            Text("tarball").tag("tarball")
-                            Text("cryptographic").tag("cryptographic")
-                        }
-                        .pickerStyle(.menu)
-                        .frame(width: 200)
-                    }
-                }
-                .frame(maxWidth: .infinity, alignment: .leading)
-            }
-
-            GroupBox("Actions") {
-                VStack(alignment: .leading, spacing: 8) {
-                    Text("Memo-0006 flow: seal-commit → seal-release → seal-verify → seal-archive.")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-
-                    HStack(spacing: 8) {
-                        Button("seal-commit") {
-                            Task {
-                                isSealActionRunning = true
-                                let out = await appState.sealCommit(
-                                    nodeID: vaultTargetNodeID,
-                                    message: sealCommitMessage
-                                )
-                                if appState.lastErrorMessage == nil {
-                                    didSealCommit = true
-                                    didSealRelease = false
-                                    didSealVerify = false
-                                    sealActionStatus = out?.isEmpty == false
-                                        ? out!
-                                        : "seal-commit completed for node \(vaultTargetNodeID)."
-                                } else {
-                                    didSealCommit = false
-                                    didSealRelease = false
-                                    didSealVerify = false
-                                    sealActionStatus = appState.lastErrorMessage ?? "seal-commit failed."
-                                }
-                                isSealActionRunning = false
-                            }
-                        }
-                        .buttonStyle(.borderedProminent)
-                        .disabled(!realmBootstrapped || isSealActionRunning || sealCommitMessage.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-
-                        Button("seal-release") {
-                            Task {
-                                isSealActionRunning = true
-                                let out = await appState.sealRelease(
-                                    nodeID: vaultTargetNodeID,
-                                    version: releaseVersion,
-                                    message: releaseMessage
-                                )
-                                if appState.lastErrorMessage == nil {
-                                    didSealRelease = true
-                                    didSealVerify = false
-                                    sealActionStatus = out?.isEmpty == false
-                                        ? out!
-                                        : "seal-release completed for node \(vaultTargetNodeID): \(releaseVersion)"
-                                } else {
-                                    didSealRelease = false
-                                    didSealVerify = false
-                                    sealActionStatus = appState.lastErrorMessage ?? "seal-release failed."
-                                }
-                                isSealActionRunning = false
-                            }
-                        }
-                        .buttonStyle(.bordered)
-                        .disabled(!realmBootstrapped || isSealActionRunning || !didSealCommit || releaseVersion.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-
-                        Button("seal-verify") {
-                            Task {
-                                isSealActionRunning = true
-                                let out = await appState.sealVerify(
-                                    nodeID: vaultTargetNodeID,
-                                    version: releaseVersion
-                                )
-                                if appState.lastErrorMessage == nil {
-                                    didSealVerify = true
-                                    sealActionStatus = out?.isEmpty == false
-                                        ? out!
-                                        : "seal-verify completed for node \(vaultTargetNodeID): \(releaseVersion)"
-                                } else {
-                                    didSealVerify = false
-                                    sealActionStatus = appState.lastErrorMessage ?? "seal-verify failed."
-                                }
-                                isSealActionRunning = false
-                            }
-                        }
-                        .buttonStyle(.bordered)
-                        .disabled(!realmBootstrapped || isSealActionRunning || !didSealRelease)
-
-                        Button("seal-archive") {
-                            Task {
-                                isSealActionRunning = true
-                                let out = await appState.sealArchive(
-                                    nodeID: vaultTargetNodeID,
-                                    version: releaseVersion,
-                                    format: archiveFormat
-                                )
-                                if appState.lastErrorMessage == nil {
-                                    sealActionStatus = out?.isEmpty == false
-                                        ? out!
-                                        : "seal-archive completed for node \(vaultTargetNodeID): \(releaseVersion) (\(archiveFormat))"
-                                } else {
-                                    sealActionStatus = appState.lastErrorMessage ?? "seal-archive failed."
-                                }
-                                isSealActionRunning = false
-                            }
-                        }
-                        .buttonStyle(.bordered)
-                        .disabled(!realmBootstrapped || isSealActionRunning || !didSealVerify)
-                    }
-
-                    Text(sealActionStatus)
-                        .font(.caption2)
-                        .foregroundStyle(.secondary)
-                        .textSelection(.enabled)
-                }
-                .frame(maxWidth: .infinity, alignment: .leading)
-            }
-
-            Spacer()
-        }
     }
 }

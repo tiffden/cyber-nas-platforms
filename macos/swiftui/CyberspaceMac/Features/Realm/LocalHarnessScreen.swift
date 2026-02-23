@@ -15,6 +15,7 @@ struct LocalHarnessScreen: View {
         case machineSetup = "Machine Setup"
         case demoWorkflow = "Demo Workflow"
         case demoVaults   = "Demo Vaults"
+        case schemeREPL   = "Scheme REPL"
     }
 
     var body: some View {
@@ -34,12 +35,28 @@ struct LocalHarnessScreen: View {
                 }
             }
             .pickerStyle(.segmented)
-            .frame(maxWidth: 420)
+            .frame(maxWidth: 560)
 
-            switch activeTab {
-            case .machineSetup: MachineSetupScreen()
-            case .demoWorkflow: DemoWorkflowScreen()
-            case .demoVaults:   DemoVaultsView()
+            ZStack {
+                MachineSetupScreen()
+                    .opacity(activeTab == .machineSetup ? 1 : 0)
+                    .allowsHitTesting(activeTab == .machineSetup)
+                    .accessibilityHidden(activeTab != .machineSetup)
+
+                DemoWorkflowScreen()
+                    .opacity(activeTab == .demoWorkflow ? 1 : 0)
+                    .allowsHitTesting(activeTab == .demoWorkflow)
+                    .accessibilityHidden(activeTab != .demoWorkflow)
+
+                DemoVaultsView()
+                    .opacity(activeTab == .demoVaults ? 1 : 0)
+                    .allowsHitTesting(activeTab == .demoVaults)
+                    .accessibilityHidden(activeTab != .demoVaults)
+
+                SchemeREPLPanel()
+                    .opacity(activeTab == .schemeREPL ? 1 : 0)
+                    .allowsHitTesting(activeTab == .schemeREPL)
+                    .accessibilityHidden(activeTab != .schemeREPL)
             }
         }
         .padding()

@@ -104,7 +104,8 @@ Notes:
       ${HARNESS_ROOT}/<machine-name>/
     Node runtime state is nested under:
       <machine-name>/<realm-name>/<node-name>/
-    Machine names come from SPKI_DEFAULT_NODE_NAMES (CSV, stored in machine.env).
+    Machine names come from SPKI_REALM_HARNESS_NODE_NAMES (or SPKI_DEFAULT_NODE_NAMES),
+    stored in machine.env as SPKI_MACHINE_NAME.
   - UI launch reuses run-local.sh with SPKI_ENV_FILE + SPKI_SKIP_BUILD=1.
 EOF
 }
@@ -358,11 +359,6 @@ run_vault_for_node() {
   vault_root="${SPKI_REALM_WORKDIR}/.vault"
   mkdir -p "$(dirname "$node_log")"
   mkdir -p "$vault_root"
-  if [[ ! -d "${SPKI_REALM_WORKDIR}/.git" ]]; then
-    git -C "$SPKI_REALM_WORKDIR" init >/dev/null
-    git -C "$SPKI_REALM_WORKDIR" config user.name "cyberspace-harness"
-    git -C "$SPKI_REALM_WORKDIR" config user.email "harness@local"
-  fi
   (
     cd "$vault_root"
     "$vault_bin" --json "$@" \
@@ -377,7 +373,9 @@ run_seal_for_node() {
   load_node_env "$id"
   local seal_bin
   local node_log
-  seal_bin="${SPKI_SEAL_BIN:-$DEFAULT_OVERLAY_ROOT/spki/scheme/chez/seal}"
+  local crypto_bridge
+  local candidate
+  seal_bin="${SPKI_SEAL_BIN:-$DEFAULT_OVERLAY_ROOT/spki/scheme/chez/bin/seal.sps}"
   node_log="${SPKI_NODE_LOG_DIR:-$(node_runtime_dir "$id")/logs}/realm.log"
   mkdir -p "$(dirname "$node_log")"
   if [[ ! -x "$seal_bin" ]]; then
@@ -385,14 +383,39 @@ run_seal_for_node() {
     echo "Set SPKI_SEAL_BIN to your overlay Chez seal executable." >&2
     exit 1
   fi
-  if [[ ! -d "${SPKI_REALM_WORKDIR}/.git" ]]; then
-    git -C "$SPKI_REALM_WORKDIR" init >/dev/null
-    git -C "$SPKI_REALM_WORKDIR" config user.name "cyberspace-harness"
-    git -C "$SPKI_REALM_WORKDIR" config user.email "harness@local"
+  # Initialize .vault/ directory structure used by seal flows.
+  mkdir -p "${SPKI_REALM_WORKDIR}/.vault/objects" \
+           "${SPKI_REALM_WORKDIR}/.vault/metadata" \
+           "${SPKI_REALM_WORKDIR}/.vault/releases" \
+           "${SPKI_REALM_WORKDIR}/.vault/audit" \
+           "${SPKI_REALM_WORKDIR}/.vault/subscriptions" \
+           "${SPKI_REALM_WORKDIR}/migrations"
+  # Resolve crypto bridge dylib and expose it via:
+  # 1) workdir symlink: ./libcrypto-bridge.dylib (first path checked by crypto-ffi)
+  # 2) DYLD_LIBRARY_PATH fallback for bare-name loading.
+  for candidate in \
+    "${SPKI_CRYPTO_BRIDGE_DYLIB:-}" \
+    "$DEFAULT_OVERLAY_ROOT/spki/scheme/chez/libcrypto-bridge.dylib" \
+    "$DEFAULT_OVERLAY_ROOT/spki/scheme/swift/chez/Cyberspace.app/Contents/Resources/libcrypto-bridge.dylib"
+  do
+    if [[ -n "$candidate" && -f "$candidate" ]]; then
+      crypto_bridge="$candidate"
+      break
+    fi
+  done
+  if [[ -z "${crypto_bridge:-}" ]]; then
+    echo "Error: libcrypto-bridge.dylib not found." >&2
+    echo "Checked SPKI_CRYPTO_BRIDGE_DYLIB, chez/, and swift/chez app resources under: $DEFAULT_OVERLAY_ROOT" >&2
+    echo "Build it with: $DEFAULT_OVERLAY_ROOT/spki/scheme/chez/build-crypto-bridge.sh" >&2
+    exit 1
   fi
+  ln -sf "$crypto_bridge" "${SPKI_REALM_WORKDIR}/libcrypto-bridge.dylib"
+  local dylib_dir
+  dylib_dir="$(dirname "$crypto_bridge")"
   (
     cd "$SPKI_REALM_WORKDIR"
-    "$seal_bin" "$@" \
+    DYLD_LIBRARY_PATH="${dylib_dir}${DYLD_LIBRARY_PATH:+:$DYLD_LIBRARY_PATH}" \
+      "$seal_bin" "$@" \
       > >(tee -a "$node_log") \
       2> >(tee -a "$node_log" >&2)
   )

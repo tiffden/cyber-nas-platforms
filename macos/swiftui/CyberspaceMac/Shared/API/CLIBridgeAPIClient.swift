@@ -193,8 +193,8 @@ struct CLIBridgeAPIClient: ClientAPI {
             return "No realm log entries yet across \(nodes.count) node(s)."
         }
 
-        // Stable sort: lines with a ts sort chronologically; lines without ts keep
-        // relative insertion order (they sort before any timestamped line).
+        // Lexicographic sort on ISO-8601 ts; entries without a ts use "" and sort
+        // before timestamped lines.
         tagged.sort { $0.ts < $1.ts }
         return tagged.suffix(clamped).map(\.line).joined(separator: "\n")
     }
