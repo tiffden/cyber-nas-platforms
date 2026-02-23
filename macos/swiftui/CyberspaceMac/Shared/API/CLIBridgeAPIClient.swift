@@ -1,3 +1,4 @@
+import Darwin
 import Foundation
 
 struct CLIBridgeAPIClient: ClientAPI {
@@ -288,17 +289,12 @@ struct CLIBridgeAPIClient: ClientAPI {
     func realmHarnessNodes(
         nodeCount: Int,
         config: RealmHarnessCreateConfig?,
-        requestID: String?
+        requestID _: String?
     ) async throws -> [RealmHarnessNodeMetadata] {
         guard nodeCount > 0 else {
             throw APIErrorPayload(code: "invalid_argument", message: "nodeCount must be > 0", details: nil)
         }
         let harnessRoot = realmHarnessRoot(config: config)
-        let realmExecutable = try resolveExecutable(
-            overrideEnvVar: "SPKI_REALM_BIN",
-            names: ["spki-realm", "spki_realm.exe"]
-        )
-        let harnessEnv = harnessEnvironment(config: config)
         // Resolve machine directory names from the CSV (mirrors resolve_node_name in realm-harness.sh).
         // Each entry is the machineLabel used as the top-level harness directory name.
         let machineNames = parseMachineNames(config: config)
@@ -314,21 +310,7 @@ struct CLIBridgeAPIClient: ClientAPI {
             // node.env is written at Bootstrap Realm time; skip machines not yet bootstrapped.
             guard FileManager.default.fileExists(atPath: envURL.path) else { continue }
             let parsedEnv = try parseNodeEnv(fileURL: envURL)
-
-            var mergedEnv = harnessEnv
-            for (key, value) in parsedEnv {
-                mergedEnv[key] = value
-            }
-
-            // Query status with each node's env injected so metadata reflects that node's isolated state.
-            let output = try run(
-                executable: realmExecutable,
-                arguments: ["--json", "--status"],
-                environment: mergedEnv,
-                requestID: requestID,
-                action: "harness.status.node\(id)"
-            )
-            let status = try parseRealmStatusOutput(output)
+            let status = derivedNodeStatus(nodeEnvURL: envURL)
 
             let workdir = parsedEnv["SPKI_REALM_WORKDIR"] ?? ""
             let keydir = parsedEnv["SPKI_KEY_DIR"] ?? ""
@@ -346,9 +328,9 @@ struct CLIBridgeAPIClient: ClientAPI {
                     logdir: logdir,
                     host: host,
                     port: port,
-                    status: status.status,
-                    memberCount: status.memberCount,
-                    policy: status.policy,
+                    status: status,
+                    memberCount: 0,
+                    policy: "runtime",
                     uuid: parsedEnv["SPKI_NODE_UUID"] ?? ""
                 )
             )
@@ -429,46 +411,25 @@ struct CLIBridgeAPIClient: ClientAPI {
 
     // MARK: - Private Helpers
 
-    private func resolveExecutable(
-        overrideEnvVar: String,
-        names: [String]
-    ) throws -> URL {
-        if let overridePath = environment[overrideEnvVar], !overridePath.isEmpty {
-            let overrideURL = URL(fileURLWithPath: overridePath)
-            if FileManager.default.isExecutableFile(atPath: overrideURL.path) {
-                return overrideURL
-            }
+    private func derivedNodeStatus(nodeEnvURL: URL) -> String {
+        let machineRoot = nodeEnvURL
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+        let pidFile = machineRoot.appendingPathComponent("listener.pid", isDirectory: false)
+        guard let pidText = try? String(contentsOf: pidFile, encoding: .utf8) else {
+            return "joined"
         }
-
-        if let binDir = environment["SPKI_BIN_DIR"], !binDir.isEmpty {
-            let dirURL = URL(fileURLWithPath: binDir, isDirectory: true)
-            for name in names {
-                let candidate = dirURL.appendingPathComponent(name)
-                if FileManager.default.isExecutableFile(atPath: candidate.path) {
-                    return candidate
-                }
-            }
+        guard let pid = Int32(pidText.trimmingCharacters(in: .whitespacesAndNewlines)), pid > 0 else {
+            return "joined"
         }
+        return isProcessAlive(pid: pid) ? "listening" : "joined"
+    }
 
-        if let path = environment["PATH"], !path.isEmpty {
-            for dir in path.split(separator: ":") {
-                for name in names {
-                    let candidate = URL(fileURLWithPath: String(dir)).appendingPathComponent(name)
-                    if FileManager.default.isExecutableFile(atPath: candidate.path) {
-                        return candidate
-                    }
-                }
-            }
+    private func isProcessAlive(pid: Int32) -> Bool {
+        if kill(pid, 0) == 0 {
+            return true
         }
-
-        throw APIErrorPayload(
-            code: "not_found",
-            message: "Could not find SPKI executable",
-            details: [
-                "names": names.joined(separator: ","),
-                "hint": "Set \(overrideEnvVar) or SPKI_BIN_DIR to your cyber-nas-overlay build output directory"
-            ]
-        )
+        return errno == EPERM
     }
 
     private func run(
@@ -708,22 +669,4 @@ struct CLIBridgeAPIClient: ClientAPI {
         return parsed
     }
 
-    private func parseRealmStatusOutput(_ output: String) throws -> RealmStatus {
-        guard let data = output.data(using: .utf8) else {
-            throw APIErrorPayload(code: "internal_error", message: "Invalid realm status output encoding", details: nil)
-        }
-        guard let rawObject = try? JSONSerialization.jsonObject(with: data),
-              let object = rawObject as? [String: Any] else {
-            throw APIErrorPayload(code: "internal_error", message: "Malformed realm status JSON", details: nil)
-        }
-        guard (object["kind"] as? String) == "realm_status" else {
-            throw APIErrorPayload(code: "internal_error", message: "Unexpected realm status payload", details: nil)
-        }
-        return RealmStatus(
-            status: object["status"] as? String ?? "unknown",
-            nodeName: object["nodeName"] as? String ?? "unknown",
-            policy: object["policy"] as? String ?? "unknown",
-            memberCount: object["memberCount"] as? Int ?? 0
-        )
-    }
 }
