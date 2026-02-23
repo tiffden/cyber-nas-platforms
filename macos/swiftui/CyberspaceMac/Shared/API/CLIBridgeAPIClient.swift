@@ -412,10 +412,8 @@ struct CLIBridgeAPIClient: ClientAPI {
     // MARK: - Private Helpers
 
     private func derivedNodeStatus(nodeEnvURL: URL) -> String {
-        let machineRoot = nodeEnvURL
-            .deletingLastPathComponent()
-            .deletingLastPathComponent()
-        let pidFile = machineRoot.appendingPathComponent("listener.pid", isDirectory: false)
+        let harnessGeneratedDir = nodeEnvURL.deletingLastPathComponent()
+        let pidFile = harnessGeneratedDir.appendingPathComponent("listener.pid", isDirectory: false)
         guard let pidText = try? String(contentsOf: pidFile, encoding: .utf8) else {
             return "joined"
         }
