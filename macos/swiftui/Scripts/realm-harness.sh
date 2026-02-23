@@ -85,6 +85,14 @@ Commands:
                     Get KEY for node ID using that node's isolated .vault
   vault-commit <ID> [MESSAGE]
                     Commit current vault state for node ID (MESSAGE optional)
+  seal-commit <ID> <MESSAGE>
+                    Run Chez seal commit for node ID
+  seal-release <ID> <VERSION> [MESSAGE]
+                    Run Chez seal release for node ID
+  seal-verify <ID> <VERSION>
+                    Run Chez seal verify for node ID
+  seal-archive <ID> <VERSION> [FORMAT]
+                    Run Chez seal archive for node ID (default FORMAT: zstd-age)
   ui <NODE_ID>       Launch one SwiftUI instance using NODE_ID environment
   ui-all-bg [N]      Launch N SwiftUI instances in background with isolated env
   stop-all-bg [N]    Stop background SwiftUI instances started by ui-all-bg
@@ -363,6 +371,33 @@ run_vault_for_node() {
   )
 }
 
+run_seal_for_node() {
+  local id="$1"
+  shift
+  load_node_env "$id"
+  local seal_bin
+  local node_log
+  seal_bin="${SPKI_SEAL_BIN:-$DEFAULT_OVERLAY_ROOT/spki/scheme/chez/seal}"
+  node_log="${SPKI_NODE_LOG_DIR:-$(node_runtime_dir "$id")/logs}/realm.log"
+  mkdir -p "$(dirname "$node_log")"
+  if [[ ! -x "$seal_bin" ]]; then
+    echo "Error: Chez seal binary not found or not executable: $seal_bin" >&2
+    echo "Set SPKI_SEAL_BIN to your overlay Chez seal executable." >&2
+    exit 1
+  fi
+  if [[ ! -d "${SPKI_REALM_WORKDIR}/.git" ]]; then
+    git -C "$SPKI_REALM_WORKDIR" init >/dev/null
+    git -C "$SPKI_REALM_WORKDIR" config user.name "cyberspace-harness"
+    git -C "$SPKI_REALM_WORKDIR" config user.email "harness@local"
+  fi
+  (
+    cd "$SPKI_REALM_WORKDIR"
+    "$seal_bin" "$@" \
+      > >(tee -a "$node_log") \
+      2> >(tee -a "$node_log" >&2)
+  )
+}
+
 cmd_init() {
   local count="${1:-$DEFAULT_NODES}"
   if ! [[ "$count" =~ ^[0-9]+$ ]] || (( count < 1 )); then
@@ -618,6 +653,66 @@ cmd_vault_commit() {
   log_event "info" "harness.vault_commit" "ok" "node=${id} message=${message}"
 }
 
+cmd_seal_commit() {
+  local id="${1:-}"
+  shift || true
+  local message="${*:-}"
+  if [[ -z "$id" || -z "$message" ]]; then
+    echo "Usage: $(basename "$0") seal-commit <NODE_ID> <MESSAGE>" >&2
+    exit 1
+  fi
+  SPKI_DEFAULT_NODE_NAMES="${SPKI_REALM_HARNESS_NODE_NAMES:-${SPKI_DEFAULT_NODE_NAMES:-}}"
+  log_event "info" "harness.seal_commit" "start" "node=${id} message=${message}"
+  run_seal_for_node "$id" commit "$message"
+  log_event "info" "harness.seal_commit" "ok" "node=${id} message=${message}"
+}
+
+cmd_seal_release() {
+  local id="${1:-}"
+  local version="${2:-}"
+  shift 2 || true
+  local message="${*:-}"
+  if [[ -z "$id" || -z "$version" ]]; then
+    echo "Usage: $(basename "$0") seal-release <NODE_ID> <VERSION> [MESSAGE]" >&2
+    exit 1
+  fi
+  SPKI_DEFAULT_NODE_NAMES="${SPKI_REALM_HARNESS_NODE_NAMES:-${SPKI_DEFAULT_NODE_NAMES:-}}"
+  log_event "info" "harness.seal_release" "start" "node=${id} version=${version}"
+  if [[ -n "$message" ]]; then
+    run_seal_for_node "$id" release "$version" --message "$message"
+  else
+    run_seal_for_node "$id" release "$version"
+  fi
+  log_event "info" "harness.seal_release" "ok" "node=${id} version=${version}"
+}
+
+cmd_seal_verify() {
+  local id="${1:-}"
+  local version="${2:-}"
+  if [[ -z "$id" || -z "$version" ]]; then
+    echo "Usage: $(basename "$0") seal-verify <NODE_ID> <VERSION>" >&2
+    exit 1
+  fi
+  SPKI_DEFAULT_NODE_NAMES="${SPKI_REALM_HARNESS_NODE_NAMES:-${SPKI_DEFAULT_NODE_NAMES:-}}"
+  log_event "info" "harness.seal_verify" "start" "node=${id} version=${version}"
+  run_seal_for_node "$id" verify "$version"
+  log_event "info" "harness.seal_verify" "ok" "node=${id} version=${version}"
+}
+
+cmd_seal_archive() {
+  local id="${1:-}"
+  local version="${2:-}"
+  local format="${3:-zstd-age}"
+  if [[ -z "$id" || -z "$version" ]]; then
+    echo "Usage: $(basename "$0") seal-archive <NODE_ID> <VERSION> [FORMAT]" >&2
+    exit 1
+  fi
+  SPKI_DEFAULT_NODE_NAMES="${SPKI_REALM_HARNESS_NODE_NAMES:-${SPKI_DEFAULT_NODE_NAMES:-}}"
+  log_event "info" "harness.seal_archive" "start" "node=${id} version=${version} format=${format}"
+  run_seal_for_node "$id" archive "$version" --format "$format"
+  log_event "info" "harness.seal_archive" "ok" "node=${id} version=${version} format=${format}"
+}
+
 cmd_clean() {
   log_event "info" "harness.clean" "start" "root=${HARNESS_ROOT}"
   for pid_file in "$HARNESS_ROOT"/*/listener.pid; do
@@ -647,6 +742,10 @@ main() {
     vault-put) cmd_vault_put "$@" ;;
     vault-get) cmd_vault_get "$@" ;;
     vault-commit) cmd_vault_commit "$@" ;;
+    seal-commit) cmd_seal_commit "$@" ;;
+    seal-release) cmd_seal_release "$@" ;;
+    seal-verify) cmd_seal_verify "$@" ;;
+    seal-archive) cmd_seal_archive "$@" ;;
     stop-all-bg) cmd_stop_all_bg "$@" ;;
     clean) cmd_clean ;;
     ""|-h|--help|help) usage ;;

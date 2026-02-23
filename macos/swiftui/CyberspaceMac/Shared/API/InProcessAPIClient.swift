@@ -185,4 +185,54 @@ struct InProcessAPIClient: ClientAPI {
         }
         return "[mock vault commit] node=\(nodeID)"
     }
+
+    func sealCommit(
+        nodeID: Int,
+        message: String,
+        config _: RealmHarnessCreateConfig?,
+        requestID _: String?
+    ) async throws -> String {
+        guard nodeID > 0 else {
+            throw APIErrorPayload(code: "invalid_argument", message: "nodeID must be > 0", details: nil)
+        }
+        return "[mock seal commit] node=\(nodeID) message=\(message)"
+    }
+
+    func sealRelease(
+        nodeID: Int,
+        version: String,
+        message: String?,
+        config _: RealmHarnessCreateConfig?,
+        requestID _: String?
+    ) async throws -> String {
+        guard nodeID > 0 else {
+            throw APIErrorPayload(code: "invalid_argument", message: "nodeID must be > 0", details: nil)
+        }
+        return "[mock seal release] node=\(nodeID) version=\(version) message=\(message ?? "")"
+    }
+
+    func sealVerify(
+        nodeID: Int,
+        version: String,
+        config _: RealmHarnessCreateConfig?,
+        requestID _: String?
+    ) async throws -> String {
+        guard nodeID > 0 else {
+            throw APIErrorPayload(code: "invalid_argument", message: "nodeID must be > 0", details: nil)
+        }
+        return "[mock seal verify] node=\(nodeID) version=\(version)"
+    }
+
+    func sealArchive(
+        nodeID: Int,
+        version: String,
+        format: String,
+        config _: RealmHarnessCreateConfig?,
+        requestID _: String?
+    ) async throws -> String {
+        guard nodeID > 0 else {
+            throw APIErrorPayload(code: "invalid_argument", message: "nodeID must be > 0", details: nil)
+        }
+        return "[mock seal archive] node=\(nodeID) version=\(version) format=\(format)"
+    }
 }

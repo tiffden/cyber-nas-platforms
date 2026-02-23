@@ -286,6 +286,116 @@ struct CLIBridgeAPIClient: ClientAPI {
         return output.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
+    func sealCommit(
+        nodeID: Int,
+        message: String,
+        config: RealmHarnessCreateConfig?,
+        requestID: String?
+    ) async throws -> String {
+        guard nodeID > 0 else {
+            throw APIErrorPayload(code: "invalid_argument", message: "nodeID must be > 0", details: nil)
+        }
+        let trimmedMessage = message.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedMessage.isEmpty else {
+            throw APIErrorPayload(code: "invalid_argument", message: "seal commit message must not be empty", details: nil)
+        }
+        let harnessScript = try resolveHarnessScript()
+        let harnessEnv = harnessEnvironment(config: config)
+        let output = try run(
+            executable: harnessScript,
+            arguments: ["seal-commit", String(nodeID), trimmedMessage],
+            environment: harnessEnv,
+            requestID: requestID,
+            action: "harness.seal_commit"
+        )
+        return output.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    func sealRelease(
+        nodeID: Int,
+        version: String,
+        message: String?,
+        config: RealmHarnessCreateConfig?,
+        requestID: String?
+    ) async throws -> String {
+        guard nodeID > 0 else {
+            throw APIErrorPayload(code: "invalid_argument", message: "nodeID must be > 0", details: nil)
+        }
+        let trimmedVersion = version.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedVersion.isEmpty else {
+            throw APIErrorPayload(code: "invalid_argument", message: "seal release version must not be empty", details: nil)
+        }
+        let harnessScript = try resolveHarnessScript()
+        let harnessEnv = harnessEnvironment(config: config)
+        var args = ["seal-release", String(nodeID), trimmedVersion]
+        if let message, !message.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            args.append(message.trimmingCharacters(in: .whitespacesAndNewlines))
+        }
+        let output = try run(
+            executable: harnessScript,
+            arguments: args,
+            environment: harnessEnv,
+            requestID: requestID,
+            action: "harness.seal_release"
+        )
+        return output.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    func sealVerify(
+        nodeID: Int,
+        version: String,
+        config: RealmHarnessCreateConfig?,
+        requestID: String?
+    ) async throws -> String {
+        guard nodeID > 0 else {
+            throw APIErrorPayload(code: "invalid_argument", message: "nodeID must be > 0", details: nil)
+        }
+        let trimmedVersion = version.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedVersion.isEmpty else {
+            throw APIErrorPayload(code: "invalid_argument", message: "seal verify version must not be empty", details: nil)
+        }
+        let harnessScript = try resolveHarnessScript()
+        let harnessEnv = harnessEnvironment(config: config)
+        let output = try run(
+            executable: harnessScript,
+            arguments: ["seal-verify", String(nodeID), trimmedVersion],
+            environment: harnessEnv,
+            requestID: requestID,
+            action: "harness.seal_verify"
+        )
+        return output.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    func sealArchive(
+        nodeID: Int,
+        version: String,
+        format: String,
+        config: RealmHarnessCreateConfig?,
+        requestID: String?
+    ) async throws -> String {
+        guard nodeID > 0 else {
+            throw APIErrorPayload(code: "invalid_argument", message: "nodeID must be > 0", details: nil)
+        }
+        let trimmedVersion = version.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedVersion.isEmpty else {
+            throw APIErrorPayload(code: "invalid_argument", message: "seal archive version must not be empty", details: nil)
+        }
+        let trimmedFormat = format.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedFormat.isEmpty else {
+            throw APIErrorPayload(code: "invalid_argument", message: "seal archive format must not be empty", details: nil)
+        }
+        let harnessScript = try resolveHarnessScript()
+        let harnessEnv = harnessEnvironment(config: config)
+        let output = try run(
+            executable: harnessScript,
+            arguments: ["seal-archive", String(nodeID), trimmedVersion, trimmedFormat],
+            environment: harnessEnv,
+            requestID: requestID,
+            action: "harness.seal_archive"
+        )
+        return output.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
     func realmHarnessNodes(
         nodeCount: Int,
         config: RealmHarnessCreateConfig?,

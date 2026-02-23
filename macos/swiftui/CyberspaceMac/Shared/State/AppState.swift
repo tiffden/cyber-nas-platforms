@@ -625,6 +625,207 @@ final class AppState: ObservableObject {
         }
     }
 
+    func sealCommit(nodeID: Int, message: String) async -> String? {
+        let trimmed = message.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else {
+            let msg = "Seal commit message is required."
+            setHarnessBackendResult("error:\n\(msg)")
+            lastErrorMessage = msg
+            return nil
+        }
+        let requestID = makeRequestID(action: "harness.seal_commit")
+        let command = "\(harnessScriptCommand(subcommand: "seal-commit", nodeCount: nodeID)) \(shellQuote(trimmed))"
+        setHarnessBackendCall(command: command)
+        logHarnessEvent(
+            action: "harness.seal_commit",
+            result: "start",
+            requestID: requestID,
+            fields: ["node_id": String(nodeID), "message": trimmed]
+        )
+        do {
+            let output = try await api.sealCommit(
+                nodeID: nodeID,
+                message: trimmed,
+                config: currentHarnessConfig,
+                requestID: requestID
+            )
+            logHarnessEvent(
+                action: "harness.seal_commit",
+                result: "ok",
+                requestID: requestID,
+                fields: ["node_id": String(nodeID)]
+            )
+            setHarnessBackendResult(output.isEmpty ? "ok: seal commit complete" : output)
+            lastErrorMessage = nil
+            await refreshRealmHarnessLog(nodeID: nodeID, requestID: requestID)
+            return output
+        } catch {
+            logHarnessEvent(
+                action: "harness.seal_commit",
+                result: "error",
+                requestID: requestID,
+                fields: ["node_id": String(nodeID), "error": formatError(error)]
+            )
+            setHarnessBackendResult("error:\n\(formatError(error))")
+            lastErrorMessage = formatError(error)
+            return nil
+        }
+    }
+
+    func sealRelease(nodeID: Int, version: String, message: String? = nil) async -> String? {
+        let trimmedVersion = version.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedVersion.isEmpty else {
+            let msg = "Release version is required."
+            setHarnessBackendResult("error:\n\(msg)")
+            lastErrorMessage = msg
+            return nil
+        }
+        let trimmedMessage = message?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let requestID = makeRequestID(action: "harness.seal_release")
+        var command = "\(harnessScriptCommand(subcommand: "seal-release", nodeCount: nodeID)) \(shellQuote(trimmedVersion))"
+        if let trimmedMessage, !trimmedMessage.isEmpty {
+            command += " \(shellQuote(trimmedMessage))"
+        }
+        setHarnessBackendCall(command: command)
+        logHarnessEvent(
+            action: "harness.seal_release",
+            result: "start",
+            requestID: requestID,
+            fields: ["node_id": String(nodeID), "version": trimmedVersion]
+        )
+        do {
+            let output = try await api.sealRelease(
+                nodeID: nodeID,
+                version: trimmedVersion,
+                message: trimmedMessage,
+                config: currentHarnessConfig,
+                requestID: requestID
+            )
+            logHarnessEvent(
+                action: "harness.seal_release",
+                result: "ok",
+                requestID: requestID,
+                fields: ["node_id": String(nodeID), "version": trimmedVersion]
+            )
+            setHarnessBackendResult(output.isEmpty ? "ok: seal release complete" : output)
+            lastErrorMessage = nil
+            await refreshRealmHarnessLog(nodeID: nodeID, requestID: requestID)
+            return output
+        } catch {
+            logHarnessEvent(
+                action: "harness.seal_release",
+                result: "error",
+                requestID: requestID,
+                fields: ["node_id": String(nodeID), "version": trimmedVersion, "error": formatError(error)]
+            )
+            setHarnessBackendResult("error:\n\(formatError(error))")
+            lastErrorMessage = formatError(error)
+            return nil
+        }
+    }
+
+    func sealVerify(nodeID: Int, version: String) async -> String? {
+        let trimmedVersion = version.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedVersion.isEmpty else {
+            let msg = "Verify version is required."
+            setHarnessBackendResult("error:\n\(msg)")
+            lastErrorMessage = msg
+            return nil
+        }
+        let requestID = makeRequestID(action: "harness.seal_verify")
+        let command = "\(harnessScriptCommand(subcommand: "seal-verify", nodeCount: nodeID)) \(shellQuote(trimmedVersion))"
+        setHarnessBackendCall(command: command)
+        logHarnessEvent(
+            action: "harness.seal_verify",
+            result: "start",
+            requestID: requestID,
+            fields: ["node_id": String(nodeID), "version": trimmedVersion]
+        )
+        do {
+            let output = try await api.sealVerify(
+                nodeID: nodeID,
+                version: trimmedVersion,
+                config: currentHarnessConfig,
+                requestID: requestID
+            )
+            logHarnessEvent(
+                action: "harness.seal_verify",
+                result: "ok",
+                requestID: requestID,
+                fields: ["node_id": String(nodeID), "version": trimmedVersion]
+            )
+            setHarnessBackendResult(output.isEmpty ? "ok: seal verify complete" : output)
+            lastErrorMessage = nil
+            await refreshRealmHarnessLog(nodeID: nodeID, requestID: requestID)
+            return output
+        } catch {
+            logHarnessEvent(
+                action: "harness.seal_verify",
+                result: "error",
+                requestID: requestID,
+                fields: ["node_id": String(nodeID), "version": trimmedVersion, "error": formatError(error)]
+            )
+            setHarnessBackendResult("error:\n\(formatError(error))")
+            lastErrorMessage = formatError(error)
+            return nil
+        }
+    }
+
+    func sealArchive(nodeID: Int, version: String, format: String = "zstd-age") async -> String? {
+        let trimmedVersion = version.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedVersion.isEmpty else {
+            let msg = "Archive version is required."
+            setHarnessBackendResult("error:\n\(msg)")
+            lastErrorMessage = msg
+            return nil
+        }
+        let trimmedFormat = format.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedFormat.isEmpty else {
+            let msg = "Archive format is required."
+            setHarnessBackendResult("error:\n\(msg)")
+            lastErrorMessage = msg
+            return nil
+        }
+        let requestID = makeRequestID(action: "harness.seal_archive")
+        let command = "\(harnessScriptCommand(subcommand: "seal-archive", nodeCount: nodeID)) \(shellQuote(trimmedVersion)) \(shellQuote(trimmedFormat))"
+        setHarnessBackendCall(command: command)
+        logHarnessEvent(
+            action: "harness.seal_archive",
+            result: "start",
+            requestID: requestID,
+            fields: ["node_id": String(nodeID), "version": trimmedVersion, "format": trimmedFormat]
+        )
+        do {
+            let output = try await api.sealArchive(
+                nodeID: nodeID,
+                version: trimmedVersion,
+                format: trimmedFormat,
+                config: currentHarnessConfig,
+                requestID: requestID
+            )
+            logHarnessEvent(
+                action: "harness.seal_archive",
+                result: "ok",
+                requestID: requestID,
+                fields: ["node_id": String(nodeID), "version": trimmedVersion, "format": trimmedFormat]
+            )
+            setHarnessBackendResult(output.isEmpty ? "ok: seal archive complete" : output)
+            lastErrorMessage = nil
+            await refreshRealmHarnessLog(nodeID: nodeID, requestID: requestID)
+            return output
+        } catch {
+            logHarnessEvent(
+                action: "harness.seal_archive",
+                result: "error",
+                requestID: requestID,
+                fields: ["node_id": String(nodeID), "version": trimmedVersion, "format": trimmedFormat, "error": formatError(error)]
+            )
+            setHarnessBackendResult("error:\n\(formatError(error))")
+            lastErrorMessage = formatError(error)
+            return nil
+        }
+    }
+
     func resetRealmHarness() async {
         let requestID = makeRequestID(action: "harness.reset")
         let config = currentHarnessConfig

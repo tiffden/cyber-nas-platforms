@@ -479,12 +479,15 @@ struct DemoWorkflowScreen: View {
 struct DemoVaultsView: View {
     @EnvironmentObject private var appState: AppState
 
-    @State private var vaultPathDraft = ".vault/demo.txt"
-    @State private var vaultValueDraft = "hello-realm"
-    @State private var didRunVaultPut = false
-    @State private var didRunVaultGet = false
-    @State private var vaultActionStatus = "Run Vault Put, then Get, then Commit."
-    @State private var isVaultActionRunning = false
+    @State private var sealCommitMessage = "Seal demo content update"
+    @State private var releaseVersion = "1.0.0"
+    @State private var releaseMessage = "Demo sealed release"
+    @State private var archiveFormat = "tarball"
+    @State private var didSealCommit = false
+    @State private var didSealRelease = false
+    @State private var didSealVerify = false
+    @State private var sealActionStatus = "Run seal-commit, then seal-release, then seal-verify, then seal-archive."
+    @State private var isSealActionRunning = false
 
     private var vaultTargetNodeID: Int {
         appState.selectedHarnessNodeID > 0 ? appState.selectedHarnessNodeID : 1
@@ -523,17 +526,37 @@ struct DemoVaultsView: View {
                     }
 
                     HStack {
-                        Text("Path")
+                        Text("Commit")
                             .frame(width: 56, alignment: .leading)
-                        TextField(".vault/demo.txt", text: $vaultPathDraft)
+                        TextField("Seal commit message", text: $sealCommitMessage)
                             .textFieldStyle(.roundedBorder)
                     }
 
                     HStack {
-                        Text("Value")
+                        Text("Release")
                             .frame(width: 56, alignment: .leading)
-                        TextField("hello-realm", text: $vaultValueDraft)
+                        TextField("1.0.0", text: $releaseVersion)
                             .textFieldStyle(.roundedBorder)
+                    }
+
+                    HStack {
+                        Text("Message")
+                            .frame(width: 56, alignment: .leading)
+                        TextField("Release message", text: $releaseMessage)
+                            .textFieldStyle(.roundedBorder)
+                    }
+
+                    HStack {
+                        Text("Archive")
+                            .frame(width: 56, alignment: .leading)
+                        Picker("", selection: $archiveFormat) {
+                            Text("zstd-age").tag("zstd-age")
+                            Text("bundle").tag("bundle")
+                            Text("tarball").tag("tarball")
+                            Text("cryptographic").tag("cryptographic")
+                        }
+                        .pickerStyle(.menu)
+                        .frame(width: 200)
                     }
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
@@ -541,77 +564,107 @@ struct DemoVaultsView: View {
 
             GroupBox("Actions") {
                 VStack(alignment: .leading, spacing: 8) {
-                    Text("Validation flow: Put → Get → Commit. Buttons are gated to verify sequence and node readiness.")
+                    Text("Memo-0006 flow: seal-commit → seal-release → seal-verify → seal-archive.")
                         .font(.caption)
                         .foregroundStyle(.secondary)
 
                     HStack(spacing: 8) {
-                        Button("Vault Put") {
+                        Button("seal-commit") {
                             Task {
-                                isVaultActionRunning = true
-                                let out = await appState.vaultPut(
+                                isSealActionRunning = true
+                                let out = await appState.sealCommit(
                                     nodeID: vaultTargetNodeID,
-                                    path: vaultPathDraft,
-                                    value: vaultValueDraft
+                                    message: sealCommitMessage
                                 )
                                 if appState.lastErrorMessage == nil {
-                                    didRunVaultPut = true
-                                    didRunVaultGet = false
-                                    vaultActionStatus = out?.isEmpty == false
+                                    didSealCommit = true
+                                    didSealRelease = false
+                                    didSealVerify = false
+                                    sealActionStatus = out?.isEmpty == false
                                         ? out!
-                                        : "Vault Put completed for node \(vaultTargetNodeID): \(vaultPathDraft)"
+                                        : "seal-commit completed for node \(vaultTargetNodeID)."
                                 } else {
-                                    didRunVaultPut = false
-                                    didRunVaultGet = false
-                                    vaultActionStatus = appState.lastErrorMessage ?? "Vault Put failed."
+                                    didSealCommit = false
+                                    didSealRelease = false
+                                    didSealVerify = false
+                                    sealActionStatus = appState.lastErrorMessage ?? "seal-commit failed."
                                 }
-                                isVaultActionRunning = false
+                                isSealActionRunning = false
                             }
                         }
                         .buttonStyle(.borderedProminent)
-                        .disabled(!realmBootstrapped || isVaultActionRunning || vaultPathDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                        .disabled(!realmBootstrapped || isSealActionRunning || sealCommitMessage.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
 
-                        Button("Vault Get") {
+                        Button("seal-release") {
                             Task {
-                                isVaultActionRunning = true
-                                let out = await appState.vaultGet(
+                                isSealActionRunning = true
+                                let out = await appState.sealRelease(
                                     nodeID: vaultTargetNodeID,
-                                    path: vaultPathDraft
+                                    version: releaseVersion,
+                                    message: releaseMessage
                                 )
                                 if appState.lastErrorMessage == nil {
-                                    didRunVaultGet = true
-                                    vaultActionStatus = out?.isEmpty == false
+                                    didSealRelease = true
+                                    didSealVerify = false
+                                    sealActionStatus = out?.isEmpty == false
                                         ? out!
-                                        : "Vault Get completed for node \(vaultTargetNodeID): \(vaultPathDraft)"
+                                        : "seal-release completed for node \(vaultTargetNodeID): \(releaseVersion)"
                                 } else {
-                                    didRunVaultGet = false
-                                    vaultActionStatus = appState.lastErrorMessage ?? "Vault Get failed."
+                                    didSealRelease = false
+                                    didSealVerify = false
+                                    sealActionStatus = appState.lastErrorMessage ?? "seal-release failed."
                                 }
-                                isVaultActionRunning = false
+                                isSealActionRunning = false
                             }
                         }
                         .buttonStyle(.bordered)
-                        .disabled(!realmBootstrapped || isVaultActionRunning || !didRunVaultPut)
+                        .disabled(!realmBootstrapped || isSealActionRunning || !didSealCommit || releaseVersion.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
 
-                        Button("Vault Commit") {
+                        Button("seal-verify") {
                             Task {
-                                isVaultActionRunning = true
-                                let out = await appState.vaultCommit(nodeID: vaultTargetNodeID)
+                                isSealActionRunning = true
+                                let out = await appState.sealVerify(
+                                    nodeID: vaultTargetNodeID,
+                                    version: releaseVersion
+                                )
                                 if appState.lastErrorMessage == nil {
-                                    vaultActionStatus = out?.isEmpty == false
+                                    didSealVerify = true
+                                    sealActionStatus = out?.isEmpty == false
                                         ? out!
-                                        : "Vault Commit completed for node \(vaultTargetNodeID)."
+                                        : "seal-verify completed for node \(vaultTargetNodeID): \(releaseVersion)"
                                 } else {
-                                    vaultActionStatus = appState.lastErrorMessage ?? "Vault Commit failed."
+                                    didSealVerify = false
+                                    sealActionStatus = appState.lastErrorMessage ?? "seal-verify failed."
                                 }
-                                isVaultActionRunning = false
+                                isSealActionRunning = false
                             }
                         }
                         .buttonStyle(.bordered)
-                        .disabled(!realmBootstrapped || isVaultActionRunning || !didRunVaultGet)
+                        .disabled(!realmBootstrapped || isSealActionRunning || !didSealRelease)
+
+                        Button("seal-archive") {
+                            Task {
+                                isSealActionRunning = true
+                                let out = await appState.sealArchive(
+                                    nodeID: vaultTargetNodeID,
+                                    version: releaseVersion,
+                                    format: archiveFormat
+                                )
+                                if appState.lastErrorMessage == nil {
+                                    sealActionStatus = out?.isEmpty == false
+                                        ? out!
+                                        : "seal-archive completed for node \(vaultTargetNodeID): \(releaseVersion) (\(archiveFormat))"
+                                } else {
+                                    sealActionStatus = appState.lastErrorMessage ?? "seal-archive failed."
+                                }
+                                isSealActionRunning = false
+                            }
+                        }
+                        .buttonStyle(.bordered)
+                        .disabled(!realmBootstrapped || isSealActionRunning || !didSealVerify)
                     }
 
-                    Text(vaultActionStatus)
+                    Text(sealActionStatus)
                         .font(.caption2)
                         .foregroundStyle(.secondary)
                         .textSelection(.enabled)

@@ -15,6 +15,10 @@ protocol ClientAPI {
     func vaultPut(nodeID: Int, path: String, value: String, config: RealmHarnessCreateConfig?, requestID: String?) async throws -> String
     func vaultGet(nodeID: Int, path: String, config: RealmHarnessCreateConfig?, requestID: String?) async throws -> String
     func vaultCommit(nodeID: Int, config: RealmHarnessCreateConfig?, requestID: String?) async throws -> String
+    func sealCommit(nodeID: Int, message: String, config: RealmHarnessCreateConfig?, requestID: String?) async throws -> String
+    func sealRelease(nodeID: Int, version: String, message: String?, config: RealmHarnessCreateConfig?, requestID: String?) async throws -> String
+    func sealVerify(nodeID: Int, version: String, config: RealmHarnessCreateConfig?, requestID: String?) async throws -> String
+    func sealArchive(nodeID: Int, version: String, format: String, config: RealmHarnessCreateConfig?, requestID: String?) async throws -> String
 }
 
 extension ClientAPI {
@@ -72,5 +76,21 @@ extension ClientAPI {
 
     func vaultCommit(nodeID: Int) async throws -> String {
         try await vaultCommit(nodeID: nodeID, config: nil, requestID: nil)
+    }
+
+    func sealCommit(nodeID: Int, message: String) async throws -> String {
+        try await sealCommit(nodeID: nodeID, message: message, config: nil, requestID: nil)
+    }
+
+    func sealRelease(nodeID: Int, version: String, message: String?) async throws -> String {
+        try await sealRelease(nodeID: nodeID, version: version, message: message, config: nil, requestID: nil)
+    }
+
+    func sealVerify(nodeID: Int, version: String) async throws -> String {
+        try await sealVerify(nodeID: nodeID, version: version, config: nil, requestID: nil)
+    }
+
+    func sealArchive(nodeID: Int, version: String, format: String) async throws -> String {
+        try await sealArchive(nodeID: nodeID, version: version, format: format, config: nil, requestID: nil)
     }
 }
