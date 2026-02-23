@@ -309,6 +309,7 @@ struct CLIBridgeAPIClient: ClientAPI {
             let machineDirName = machineDirectoryName(nodeID: id, machineNames: machineNames)
             let envURL = harnessRoot
                 .appendingPathComponent(machineDirName, isDirectory: true)
+                .appendingPathComponent("harness-generated", isDirectory: true)
                 .appendingPathComponent("node.env", isDirectory: false)
             // node.env is written at Bootstrap Realm time; skip machines not yet bootstrapped.
             guard FileManager.default.fileExists(atPath: envURL.path) else { continue }
@@ -672,16 +673,7 @@ struct CLIBridgeAPIClient: ClientAPI {
     }
 
     private func resolvedNodeLogDirectory(parsedEnv: [String: String]) -> String {
-        if let explicit = parsedEnv["SPKI_NODE_LOG_DIR"], !explicit.isEmpty {
-            return explicit
-        }
-        let workdir = parsedEnv["SPKI_REALM_WORKDIR"] ?? ""
-        guard !workdir.isEmpty else { return "" }
-        let workURL = URL(fileURLWithPath: workdir, isDirectory: true)
-        return workURL
-            .deletingLastPathComponent()
-            .appendingPathComponent("logs", isDirectory: true)
-            .path
+        return parsedEnv["SPKI_NODE_LOG_DIR"] ?? ""
     }
 
     private func extractJSONTimestamp(from line: String) -> String? {

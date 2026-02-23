@@ -48,7 +48,7 @@ struct RealmHarnessCreateConfig: Equatable {
     let nodeNamesCSV: String?
     let logLevel: String?
     /// Overrides the name assigned to the bootstrap node (node 1) during self-join.
-    /// When nil the default from SPKI_DEFAULT_NODE_NAMES is used.
+    /// When nil the machine label from nodeNamesCSV is used.
     let bootstrapNodeName: String?
 
     init(
