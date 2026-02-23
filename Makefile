@@ -1,4 +1,4 @@
-.PHONY: demo demo-clean mdns-clean ui-build help
+.PHONY: demo demo-clean mdns-clean ui-build clean-build help
 
 UI_SCRIPTS_DIR := macos/swiftui/Scripts
 UI_LOG := /tmp/cyberspace-testbed-ui.log
@@ -28,9 +28,15 @@ ui-build:
 	@echo "Building CyberspaceMac UI..."
 	@cd macos/swiftui && swift build -c debug --product CyberspaceMac
 
+clean-build:
+	@echo "Removing SwiftPM .build artifacts..."
+	@find . -type d -name .build -prune -exec rm -rf {} +
+	@echo "Build artifact cleanup done."
+
 help:
 	@echo "Local Demo Commands:"
 	@echo "  make demo        - Stop running UI, clean testbed, relaunch in background"
 	@echo "  make demo-clean  - Stop UI and remove testbed data"
 	@echo "  make ui-build    - Build CyberspaceMac UI (swift build -c debug --product CyberspaceMac)"
+	@echo "  make clean-build - Remove all SwiftPM .build directories"
 	@echo "  make mdns-clean  - Kill stale _cyberspace._tcp mDNS registrations"

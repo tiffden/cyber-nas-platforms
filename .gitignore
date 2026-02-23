@@ -2,8 +2,7 @@
 .vscode/
 
 # SwiftPM build artifacts
-macos/swiftui/.build/
-macos/swiftui/interface-layer/**/.build/
+**/.build/
 .realm-harness/
 .swiftpm/
 
